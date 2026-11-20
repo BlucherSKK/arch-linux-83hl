@@ -1,0 +1,10 @@
+
+  Arch Linux ARM на Lenovo IdeaPad Slim 5 14Q8X9 (83HL)
+  Snapdragon X Plus X1P42100 / Adreno X1-45 / FastConnect 7800
+
+  root / arch      (смените пароль: passwd)
+  arch / arch      (обычный пользователь, wheel)
+  сеть:            nmcli device wifi list && nmcli device wifi connect "<SSID>" password "<pass>"
+  ssh:             systemctl enable --now sshd
+  ядро:            uname -r
+

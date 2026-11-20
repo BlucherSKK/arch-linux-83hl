@@ -1,0 +1,6 @@
+out/
+kernel/
+*.img
+*.img.zst
+*.img.zst.part*
+.cache/

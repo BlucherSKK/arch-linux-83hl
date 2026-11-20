@@ -1,0 +1,250 @@
+name: build-83hl
+
+# Собирает:
+#   1) ядро linux-83hl (arm64, cross-clang)      -> linux-83hl-<ver>-arm64.tar.zst
+#   2) готовый образ системы (GPT + ESP + ext4)  -> arch-83hl.img.zst (+ части, если >1.9 ГиБ)
+# и публикует всё в GitHub Release.
+#
+# Триггеры:
+#   * push тега v*        — собрать и выложить релиз
+#   * workflow_dispatch   — ручной запуск (можно без релиза)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: "Git URL ядра (пусто = <owner>/linux-83hl)"
+        required: false
+        default: ""
+      kernel_ref:
+        description: "Ветка/тег/коммит ядра"
+        required: false
+        default: "main"
+      image_size:
+        description: "Размер образа (6G, 8G, ...)"
+        required: false
+        default: "6G"
+      release_tag:
+        description: "Тег релиза (пусто = тег из push / без релиза)"
+        required: false
+        default: ""
+      skip_release:
+        description: "Только собрать, без релиза"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  KERNEL_REPO: ${{ inputs.kernel_repo || vars.KERNEL_REPO || format('{0}/linux-83hl', github.repository_owner) }}
+  KERNEL_REF: ${{ inputs.kernel_ref || vars.KERNEL_REF || 'main' }}
+  IMAGE_SIZE: ${{ inputs.image_size || vars.IMAGE_SIZE || '6G' }}
+  DTB: ${{ vars.DTB }}
+  ZSTD_LEVEL: "12"
+  CCACHE: "1"
+
+jobs:
+  kernel:
+    name: kernel (arm64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            clang lld llvm dwarves cpio zstd xz-utils kmod git ccache
+
+      - name: kernel source
+        run: |
+          set -euo pipefail
+          if [ -f kernel/Makefile ]; then
+            echo "использую ./kernel из репозитория"
+            exit 0
+          fi
+          if git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null | grep -qx kernel; then
+            echo "submodule kernel"
+            git submodule update --init --recursive kernel
+            exit 0
+          fi
+          echo "клонирую $KERNEL_REPO @ $KERNEL_REF"
+          git clone --depth 1 --branch "$KERNEL_REF" "$KERNEL_REPO" kernel \
+            || { git clone "$KERNEL_REPO" kernel && git -C kernel checkout "$KERNEL_REF"; }
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ env.KERNEL_REF }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ env.KERNEL_REF }}-
+            ccache-
+
+      - name: build
+        run: bash scripts/build-kernel.sh
+        env:
+          JOBS: "4"
+
+      - name: summary
+        run: |
+          {
+            echo "### Ядро"
+            echo '```'
+            cat out/kernel-pkg/kernel-release.txt
+            ls -lh out/*.tar.zst
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-pkg
+          path: out/kernel-pkg
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-tar
+          path: out/linux-*.tar.zst
+          retention-days: 14
+
+  image:
+    name: image (rootfs + disk)
+    needs: kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: qemu binfmt
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dosfstools mtools gdisk e2fsprogs zstd curl ca-certificates
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-pkg
+          path: out/kernel-pkg
+
+      - name: rootfs
+        run: sudo -E bash scripts/make-rootfs.sh
+        env:
+          EXTRA_PKGS: ${{ vars.EXTRA_PKGS }}
+
+      - name: disk image
+        run: sudo -E bash scripts/make-image.sh
+
+      - name: summary
+        run: |
+          {
+            echo "### Образ"
+            echo '```'
+            cat out/IMAGE_INFO.txt || true
+            ls -lh out/*.img* 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-files
+          path: |
+            out/arch-83hl.img.zst
+            out/arch-83hl.img.zst.part*
+            out/arch-83hl.img.zst.parts.txt
+            out/IMAGE_INFO.txt
+            out/SHA256SUMS.image
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: release
+    needs: [kernel, image]
+    if: ${{ !inputs.skip_release && (startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != '') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: checksums
+        run: |
+          cd dist
+          ls -lh
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: "83HL ${{ inputs.release_tag || github.ref_name }}"
+          make_latest: true
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            Ядро и образ системы для **Lenovo IdeaPad Slim 5 14Q8X9 (83HL)**
+            (Snapdragon X Plus X1P42100, Adreno X1-45, FastConnect 7800).
+
+            ### Что в релизе
+
+            | файл | что это |
+            |---|---|
+            | `linux-83hl-*.tar.zst` | ядро + модули + dtbs + config + System.map |
+            | `arch-83hl.img.zst` | готовый образ диска (GPT: ESP + ext4), не установщик |
+            | `arch-83hl.img.zst.part*` | части образа, если он больше 1.9 ГиБ |
+            | `SHA256SUMS` | контрольные суммы |
+
+            ### Запись на диск ноутбука
+
+            ```bash
+            # ВНИМАНИЕ: стирает весь диск, включая Windows
+            sudo pacman -S --needed zstd
+            zstd -dc arch-83hl.img.zst | sudo dd of=/dev/nvme0n1 bs=16M status=progress conv=fsync
+            ```
+
+            Если образ порезан на части:
+
+            ```bash
+            cat arch-83hl.img.zst.part* > arch-83hl.img.zst
+            zstd -dc arch-83hl.img.zst | sudo dd of=/dev/nvme0n1 bs=16M status=progress conv=fsync
+            ```
+
+            В BIOS нужно **выключить Secure Boot** (образ не подписан).
+            При первом включении раздел автоматически растянется на весь диск.
+
+            ### Вход
+
+            * `root` / `arch`
+            * `arch` / `arch` (wheel)
+            * пароли **смените**: `passwd`, `passwd arch`
+
+            ### Ограничения
+
+            * без своего DTS (`dts/` в репозитории) ядро на этом ноуте не заведётся;
+            * Wi-Fi (ath12k) требует firmware из `linux-firmware` и рабочих remoteproc-узлов в DTS;
+            * звук на X1E в mainline пока частичный;
+            * Secure Boot выключен — иначе UEFI не примет `BOOTAA64.EFI`.

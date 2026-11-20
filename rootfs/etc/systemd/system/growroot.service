@@ -1,0 +1,14 @@
+[Unit]
+Description=Expand root partition to fill the disk
+ConditionPathExists=!/var/lib/growroot.done
+After=local-fs.target systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/growroot.sh
+RemainAfterExit=yes
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
