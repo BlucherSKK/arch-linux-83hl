@@ -125,12 +125,13 @@ cp -f "$BUILD_DIR/System.map" "$PKG_DIR/System.map"
 printf '%s\n' "$KREL" >"$PKG_DIR/kernel-release.txt"
 
 "${MAKE[@]}" -s INSTALL_MOD_PATH="$PKG_DIR" INSTALL_MOD_STRIP=1 modules_install
-"${MAKE[@]}" -s INSTALL_DTBS_PATH="$PKG_DIR/boot/dtbs" dtbs_install
+"${MAKE[@]}" -s INSTALL_DTBS_PATH="$PKG_DIR/boot/dtbs/$KREL" dtbs_install
 
 # --- проверка dtb --------------------------------------------------------
 if [ -n "$DTB" ]; then
-  [ -f "$PKG_DIR/boot/dtbs/$KREL/$DTB" ] || die "dtb не собран: $DTB"
-  log "dtb: $DTB"
+  found_dtb=$(find "$PKG_DIR/boot/dtbs" -type f -name "$(basename "$DTB")" 2>/dev/null | head -1)
+  [ -n "$found_dtb" ] || die "dtb не собран: $DTB"
+  log "dtb: $DTB -> $found_dtb"
 else
   found=$(find "$PKG_DIR/boot/dtbs/$KREL" -name '*.dtb' 2>/dev/null | head -5 || true)
   if [ -z "$found" ]; then

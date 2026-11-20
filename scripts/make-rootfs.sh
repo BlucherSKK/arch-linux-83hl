@@ -67,8 +67,8 @@ if [ -d "$KERNEL_PKG/boot/dtbs/$KREL" ]; then
   cp -a "$KERNEL_PKG/boot/dtbs/$KREL/." "$ROOTFS_DIR/boot/dtbs/$KREL/"
 fi
 # DTB зашивается в UKI (.dtb): на arm64 UEFI не отдаёт дерево устройств
-SRC_DTB="$KERNEL_PKG/boot/dtbs/$KREL/$DTB"
-[ -f "$SRC_DTB" ] || die "нет dtb: $SRC_DTB (задайте DTB=...)"
+SRC_DTB=$(find "$KERNEL_PKG/boot/dtbs" -type f -name "$(basename "$DTB")" 2>/dev/null | head -1)
+[ -n "$SRC_DTB" ] || die "нет dtb: $DTB (задайте DTB=...)"
 install -m 0644 "$SRC_DTB" "$ROOTFS_DIR/boot/dtb-83hl.dtb"
 log "dtb для UKI: $DTB"
 

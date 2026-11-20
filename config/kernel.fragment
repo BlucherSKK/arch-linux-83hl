@@ -10,7 +10,8 @@
 
 # --- идентификация сборки ------------------------------------------------
 CONFIG_LOCALVERSION="-83hl"
-CONFIG_LOCALVERSION_AUTO=n
+# CONFIG_LOCALVERSION_AUTO уже выключен в ubuntu_x1e_defconfig; не трогаем,
+# иначе merge_config дропнет строку и olddefconfig включит AUTO обратно
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
 
