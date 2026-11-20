@@ -63,8 +63,19 @@ dd if="$esp_img" of="$IMG" bs=512 seek="$s1" conv=notrunc,sparse status=none
 # --- root ----------------------------------------------------------------
 log "ext4 + копирование rootfs"
 root_img="$WORK/root.img"
+# /efi — точка монтирования ESP; содержимое уже в FAT32-разделе, в ext4 его не дублируем
+mkdir -p "$ROOTFS_DIR/efi"
+mv "$ROOTFS_DIR/efi" "$WORK/efi-saved"
+mkdir -p "$ROOTFS_DIR/efi"
+restore_efi() {
+  rm -rf "$ROOTFS_DIR/efi"
+  mv "$WORK/efi-saved" "$ROOTFS_DIR/efi"
+}
+trap restore_efi EXIT
 mkfs.ext4 -q -F -L "$IMAGE_LABEL" -b 4096 -d "$ROOTFS_DIR" "$root_img" $(( z2 / 8 ))
 e2fsck -fn "$root_img" >/dev/null || warn "e2fsck сообщил о замечаниях (для свежей ФС это норм)"
+restore_efi
+trap - EXIT
 
 dd if="$root_img" of="$IMG" bs=512 seek="$s2" conv=notrunc,sparse status=none
 sync

@@ -35,7 +35,7 @@ else
   need_cmd "${CROSS_COMPILE}gcc"
 fi
 
-need_cmd make bc flex bison cpio tar zstd
+need_cmd make bc flex bison tar zstd
 command -v depmod >/dev/null 2>&1 || warn "depmod не найден — модули будут без modules.dep (поставьте kmod)"
 
 [ -f "$KERNEL_DIR/Makefile" ] || die "нет исходников ядра в $KERNEL_DIR (ожидается Makefile)"

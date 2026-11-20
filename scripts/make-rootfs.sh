@@ -28,7 +28,7 @@ FIRMWARE_DIR=${FIRMWARE_DIR:-$OUT/firmware}
 DTB=${DTB:-qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb}
 
 [ "$(id -u)" -eq 0 ] || die "нужен root: sudo bash scripts/make-rootfs.sh"
-need_cmd curl tar chroot mount umount cpio zstd
+need_cmd curl tar chroot mount umount zstd
 
 KREL=${KREL:-$(cat "$KERNEL_PKG/kernel-release.txt" 2>/dev/null || true)}
 [ -n "$KREL" ] || die "не найден $KERNEL_PKG/kernel-release.txt (сначала build-kernel.sh)"
@@ -122,6 +122,7 @@ mount -t proc proc "$ROOTFS_DIR/proc"
 mount -t sysfs sys "$ROOTFS_DIR/sys"
 mount -t tmpfs tmpfs "$ROOTFS_DIR/run"
 
+rm -f "$ROOTFS_DIR/etc/resolv.conf"
 if ! cp -f /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf" 2>/dev/null; then
   printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' >"$ROOTFS_DIR/etc/resolv.conf"
 fi
@@ -163,9 +164,15 @@ fi
 
 echo "==> пакеты"
 # shellcheck disable=SC2086
-"${PAC[@]}" -S --needed sudo openssh networkmanager vim htop zstd less which \
+"${PAC[@]}" -S --needed sudo openssh networkmanager bluez vim htop zstd less which \
   linux-firmware-qcom alsa-utils alsa-ucm-conf \
   ${EXTRA_PKGS:-}
+
+echo "==> сервисы"
+systemctl enable NetworkManager sshd systemd-resolved systemd-timesyncd \
+  bluetooth fstrim.timer growroot.service
+# DNS: systemd-resolved управляет /etc/resolv.conf
+ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
 echo "==> базовая настройка"
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime

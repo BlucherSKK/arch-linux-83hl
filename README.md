@@ -41,16 +41,21 @@ push tag v*  ──►  kernel job  ──►  image job  ──►  release
 
 ## Как запустить сборку
 
-### Вариант 1: тег
+Только вручную: GitHub → **Actions** → **build-83hl** → *Run workflow*
+(ветка `main`). Поля:
 
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+| поле | смысл |
+|---|---|
+| `kernel_repo` | git-URL ядра (пусто — jglathe/linux_ms_dev_kit) |
+| `kernel_ref` | ветка/тег/коммит (пусто — jg/ubuntu-qcom-x1e-7.2.y) |
+| `dtb` | какой DTB зашить в UKI (пусто — slim5x-oled) |
+| `firmware_url` | `.tar.gz` с прошивками (пусто — переменная `FIRMWARE_URL`) |
+| `image_size` | размер образа до growroot (по умолчанию `6G`) |
+| `release_tag` | если заполнить, например `v0.1.0`, — создать GitHub Release |
+| `skip_release` | собрать без публикации |
 
-### Вариант 2: руками
-
-Actions → **build-83hl** → *Run workflow*. Можно задать `kernel_repo`,
-`kernel_ref`, `image_size`, `release_tag`, `skip_release`.
+Без `release_tag` ядро и образ остаются только в артефактах запуска
+(14 дней). Автоматического запуска по тегам нет.
 
 ### Переменные репозитория (Settings → Variables)
 

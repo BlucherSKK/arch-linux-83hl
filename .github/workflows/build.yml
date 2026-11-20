@@ -5,13 +5,10 @@ name: build-83hl
 #   2) готовый образ системы (GPT + ESP + ext4)  -> arch-83hl.img.zst (+ части, если >1.9 ГиБ)
 # и публикует всё в GitHub Release.
 #
-# Триггеры:
-#   * push тега v*        — собрать и выложить релиз
-#   * workflow_dispatch   — ручной запуск (можно без релиза)
+# Запуск только ручной: Actions -> build-83hl -> Run workflow.
+# Релиз создаётся, если заполнено поле release_tag.
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       kernel_repo:
@@ -22,16 +19,24 @@ on:
         description: "Ветка/тег/коммит ядра (пусто = jg/ubuntu-qcom-x1e-7.2.y)"
         required: false
         default: ""
+      dtb:
+        description: "DTB (пусто = qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb)"
+        required: false
+        default: ""
+      firmware_url:
+        description: "URL .tar.gz с прошивками ADSP/CDSP/GPU (пусто = переменная FIRMWARE_URL)"
+        required: false
+        default: ""
       image_size:
         description: "Размер образа (6G, 8G, ...)"
         required: false
         default: "6G"
       release_tag:
-        description: "Тег релиза (пусто = тег из push / без релиза)"
+        description: "Тег релиза, напр. v0.1.0 (пусто = только собрать)"
         required: false
         default: ""
       skip_release:
-        description: "Только собрать, без релиза"
+        description: "Не публиковать релиз"
         type: boolean
         default: false
 
@@ -47,9 +52,9 @@ env:
   KERNEL_REPO: ${{ inputs.kernel_repo || vars.KERNEL_REPO || 'https://github.com/jglathe/linux_ms_dev_kit' }}
   KERNEL_REF: ${{ inputs.kernel_ref || vars.KERNEL_REF || 'jg/ubuntu-qcom-x1e-7.2.y' }}
   KDEFCONFIG: ${{ vars.KDEFCONFIG || 'ubuntu_x1e_defconfig' }}
-  DTB: ${{ vars.DTB || 'qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb' }}
+  DTB: ${{ inputs.dtb || vars.DTB || 'qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb' }}
   # .tar.gz с firmware/qcom/... (ADSP/CDSP/GPU из дампа Windows), см. docs/83hl-linux.md
-  FIRMWARE_URL: ${{ vars.FIRMWARE_URL }}
+  FIRMWARE_URL: ${{ inputs.firmware_url || vars.FIRMWARE_URL }}
   IMAGE_SIZE: ${{ inputs.image_size || vars.IMAGE_SIZE || '6G' }}
   ZSTD_LEVEL: "12"
   CCACHE: "1"
@@ -64,12 +69,17 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
       - name: deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libelf-dev \
-            clang lld llvm dwarves cpio zstd xz-utils kmod git ccache
+            clang lld llvm dwarves zstd xz-utils kmod git ccache
 
       - name: kernel source
         run: |
@@ -112,12 +122,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: kernel-pkg
-          path: out/kernel-pkg
-          retention-days: 14
-
-      - uses: actions/upload-artifact@v4
-        with:
           name: kernel-tar
           path: out/linux-*.tar.zst
           retention-days: 14
@@ -150,8 +154,14 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: kernel-pkg
-          path: out/kernel-pkg
+          name: kernel-tar
+          path: out
+
+      - name: unpack kernel
+        run: |
+          mkdir -p out/kernel-pkg
+          tar -C out/kernel-pkg -xf out/linux-*.tar.zst --zstd
+          cat out/kernel-pkg/kernel-release.txt
 
       - name: rootfs
         run: sudo -E bash scripts/make-rootfs.sh
@@ -186,8 +196,9 @@ jobs:
   release:
     name: release
     needs: [kernel, image]
-    if: ${{ !inputs.skip_release && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) }}
+    if: ${{ !inputs.skip_release && inputs.release_tag != '' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -209,8 +220,8 @@ jobs:
       - name: publish
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag || github.ref_name }}
-          name: "83HL ${{ inputs.release_tag || github.ref_name }}"
+          tag_name: ${{ inputs.release_tag }}
+          name: "83HL ${{ inputs.release_tag }}"
           make_latest: true
           generate_release_notes: true
           files: dist/*
