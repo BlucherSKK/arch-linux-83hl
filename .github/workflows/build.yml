@@ -15,13 +15,13 @@ on:
   workflow_dispatch:
     inputs:
       kernel_repo:
-        description: "Git URL ядра (пусто = <owner>/linux-83hl)"
+        description: "Git URL ядра (пусто = jglathe/linux_ms_dev_kit)"
         required: false
         default: ""
       kernel_ref:
-        description: "Ветка/тег/коммит ядра"
+        description: "Ветка/тег/коммит ядра (пусто = jg/ubuntu-qcom-x1e-7.2.y)"
         required: false
-        default: "main"
+        default: ""
       image_size:
         description: "Размер образа (6G, 8G, ...)"
         required: false
@@ -43,10 +43,14 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  KERNEL_REPO: ${{ inputs.kernel_repo || vars.KERNEL_REPO || format('{0}/linux-83hl', github.repository_owner) }}
-  KERNEL_REF: ${{ inputs.kernel_ref || vars.KERNEL_REF || 'main' }}
+  # ядро Jens Glathe: там уже есть DTS для 83HL (x1p42100-lenovo-ideapad-slim5x-oled)
+  KERNEL_REPO: ${{ inputs.kernel_repo || vars.KERNEL_REPO || 'https://github.com/jglathe/linux_ms_dev_kit' }}
+  KERNEL_REF: ${{ inputs.kernel_ref || vars.KERNEL_REF || 'jg/ubuntu-qcom-x1e-7.2.y' }}
+  KDEFCONFIG: ${{ vars.KDEFCONFIG || 'ubuntu_x1e_defconfig' }}
+  DTB: ${{ vars.DTB || 'qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb' }}
+  # .tar.gz с firmware/qcom/... (ADSP/CDSP/GPU из дампа Windows), см. docs/83hl-linux.md
+  FIRMWARE_URL: ${{ vars.FIRMWARE_URL }}
   IMAGE_SIZE: ${{ inputs.image_size || vars.IMAGE_SIZE || '6G' }}
-  DTB: ${{ vars.DTB }}
   ZSTD_LEVEL: "12"
   CCACHE: "1"
 
@@ -54,7 +58,7 @@ jobs:
   kernel:
     name: kernel (arm64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
@@ -249,7 +253,9 @@ jobs:
 
             ### Ограничения
 
-            * без своего DTS (`dts/` в репозитории) ядро на этом ноуте не заведётся;
-            * Wi-Fi (ath12k) требует firmware из `linux-firmware` и рабочих remoteproc-узлов в DTS;
-            * звук на X1E в mainline пока частичный;
+            * ядро собрано из [jglathe/linux_ms_dev_kit](https://github.com/jglathe/linux_ms_dev_kit)
+              (`jg/ubuntu-qcom-x1e-7.2.y`), DTS `x1p42100-lenovo-ideapad-slim5x-oled`;
+            * звук и GPU требуют прошивок из Windows-дампа (`qcom/x1p42100/LENOVO/83HL/`);
+              если сборка шла без `FIRMWARE_URL`, их нужно положить вручную — см. `docs/83hl-linux.md`;
+            * suspend работает как s2idle (~2 Вт в простое), глубокий сон — отдельная история;
             * Secure Boot выключен — иначе UEFI не примет `BOOTAA64.EFI`.

@@ -7,7 +7,9 @@
 #   KERNEL_PKG   результат build-kernel.sh      (out/kernel-pkg)
 #   DISTRO_URL   архив ALARM                    (os.archlinuxarm.org, latest)
 #   KREL         версия ядра (по умолчанию из KERNEL_PKG)
+#   DTB          какой dtb зашить в UKI (по умолчанию slim5x-oled)
 #   EXTRA_PKGS   доп. пакеты pacman
+#   FIRMWARE_URL ссылка на .tar.gz с firmware/ (ADSP/CDSP/GPU из Windows)
 #   SKIP_PACMAN_UPGRADE=1  не делать pacman -Syu
 set -euo pipefail
 
@@ -21,6 +23,9 @@ DISTRO_URL=${DISTRO_URL:-http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-late
 DISTRO_SHA256=${DISTRO_SHA256:-}
 EXTRA_PKGS=${EXTRA_PKGS:-}
 SKIP_PACMAN_UPGRADE=${SKIP_PACMAN_UPGRADE:-0}
+FIRMWARE_URL=${FIRMWARE_URL:-}
+FIRMWARE_DIR=${FIRMWARE_DIR:-$OUT/firmware}
+DTB=${DTB:-qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb}
 
 [ "$(id -u)" -eq 0 ] || die "нужен root: sudo bash scripts/make-rootfs.sh"
 need_cmd curl tar chroot mount umount cpio zstd
@@ -58,10 +63,36 @@ if [ -d "$KERNEL_PKG/boot/dtbs/$KREL" ]; then
   mkdir -p "$ROOTFS_DIR/boot/dtbs/$KREL"
   cp -a "$KERNEL_PKG/boot/dtbs/$KREL/." "$ROOTFS_DIR/boot/dtbs/$KREL/"
 fi
+# DTB зашивается в UKI (.dtb): на arm64 UEFI не отдаёт дерево устройств
+SRC_DTB="$KERNEL_PKG/boot/dtbs/$KREL/$DTB"
+[ -f "$SRC_DTB" ] || die "нет dtb: $SRC_DTB (задайте DTB=...)"
+install -m 0644 "$SRC_DTB" "$ROOTFS_DIR/boot/dtb-83hl.dtb"
+log "dtb для UKI: $DTB"
 
 # --- 4. оверлей конфигов -------------------------------------------------
 log "оверлей rootfs/"
 cp -a "$ROOT/rootfs/." "$ROOTFS_DIR/"
+
+# --- 4b. прошивки ADSP/CDSP/GPU из Windows -------------------------------
+if [ -n "$FIRMWARE_URL" ] && [ ! -d "$FIRMWARE_DIR/qcom" ]; then
+  log "скачиваю firmware: $FIRMWARE_URL"
+  mkdir -p "$FIRMWARE_DIR"
+  curl -fL --retry 3 -o "$CACHE/firmware.tar.gz" "$FIRMWARE_URL"
+  tar -xzf "$CACHE/firmware.tar.gz" -C "$FIRMWARE_DIR"
+fi
+mkdir -p "$ROOTFS_DIR/usr/lib/firmware"
+for d in "$ROOT/firmware" "$FIRMWARE_DIR"; do
+  if [ -d "$d" ] && [ -n "$(ls -A "$d" 2>/dev/null)" ]; then
+    log "firmware: $d"
+    cp -a "$d/." "$ROOTFS_DIR/usr/lib/firmware/"
+  fi
+done
+FW83="$ROOTFS_DIR/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL"
+if [ -f "$FW83/qcadsp8380.mbn" ] && [ -f "$FW83/qcdxkmsucpurwa.mbn" ]; then
+  log "ADSP/CDSP/GPU firmware для 83HL: на месте"
+else
+  warn "нет $FW83/qcadsp8380.mbn или qcdxkmsucpurwa.mbn — не будет звука и GPU (см. docs/83hl-linux.md)"
+fi
 
 # fstab с метками разделов
 cat >"$ROOTFS_DIR/etc/fstab" <<EOF
@@ -133,6 +164,7 @@ fi
 echo "==> пакеты"
 # shellcheck disable=SC2086
 "${PAC[@]}" -S --needed sudo openssh networkmanager vim htop zstd less which \
+  linux-firmware-qcom alsa-utils alsa-ucm-conf \
   ${EXTRA_PKGS:-}
 
 echo "==> базовая настройка"
@@ -149,6 +181,26 @@ chmod 0750 /etc/sudoers.d
 echo "==> mkinitcpio ($KREL)"
 mkinitcpio -k "$KREL" -c /etc/mkinitcpio.conf -g /boot/initramfs-linux83hl.img
 
+echo "==> audio topology для LENOVO-Ideapad-5"
+FW=/usr/lib/firmware/qcom/x1e80100
+SRC=""
+for c in "$FW/X1E80100-Romulus-tplg.bin" "$FW/X1E80100-Romulus-tplg.bin.zst"; do
+  [ -e "$c" ] && { SRC=$c; break; }
+done
+if [ -n "$SRC" ]; then
+  case "$SRC" in
+    *.zst) EXT=.bin.zst ;;
+    *)     EXT=.bin ;;
+  esac
+  for name in X1E80100-LENOVO-Ideapad-5 X1E80100-LENOVO-Ideapad-5-2in1; do
+    [ -e "$FW/$name-tplg$EXT" ] || \
+      ln -s "$(basename "$SRC")" "$FW/$name-tplg$EXT"
+  done
+  ls -l "$FW"/X1E80100-LENOVO-Ideapad-5-tplg*
+else
+  echo "!!! нет X1E80100-Romulus-tplg.bin(.zst) — проверьте linux-firmware-qcom"
+fi
+
 echo "==> UKI"
 STUB=/usr/lib/systemd/boot/efi/linuxaa64.efi.stub
 [ -f "$STUB" ] || { echo "нет $STUB"; exit 1; }
@@ -156,6 +208,7 @@ mkdir -p /efi/EFI/BOOT /efi/EFI/Linux
 objcopy \
   --add-section .osrel=/usr/lib/os-release        --change-section-vma .osrel=0x20000 \
   --add-section .cmdline=/root/cmdline            --change-section-vma .cmdline=0x30000 \
+  --add-section .dtb=/boot/dtb-83hl.dtb           --change-section-vma .dtb=0x400000 \
   --add-section .linux=/boot/Image-83hl           --change-section-vma .linux=0x2000000 \
   --add-section .initrd=/boot/initramfs-linux83hl.img --change-section-vma .initrd=0x3000000 \
   "$STUB" /efi/EFI/BOOT/BOOTAA64.EFI

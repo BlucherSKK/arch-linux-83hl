@@ -24,7 +24,7 @@
 | NVMe | PCI `144D:A80D` | `nvme` |
 | Card reader | PCI `1217:8621` (BayHub) | `sdhci_pci` |
 | USB | Synopsys xHCI + dwc3 | `xhci_pci`, `dwc3-qcom` |
-| Аудио | Aqstic (WCD938x + Q6) | частично в mainline |
+| Аудио | Aqstic (WCD938x + Q6) | `snd-soc-x1e80100`, SoundWire; нужны прошивки ADSP/CDSP |
 | Тачпад | I2C HID | `i2c-hid-of`, `hid-multitouch` |
 | Камера | USB (`Integrated Camera`) | `uvcvideo` |
 | TPM | `MSFT0101` / TrEE | `tpm_crb` (если заработает) |
@@ -56,3 +56,6 @@ iasl -d acpi/registry/DSDT_00000003_00000000.bin
 * `devices/enum-acpi.reg` — ресурсы (MMIO/IRQ/GPIO) каждого ACPI-устройства;
 * `drivers/` — OEM-INF (Qualcomm/Lenovo), имена подсказывают блоки;
 * `system/msinfo32.txt`, `system/bcdedit.txt` — окружение загрузки.
+
+Как это заводится в Linux (ядро, прошивки, звук, GPU, сон) —
+[docs/83hl-linux.md](83hl-linux.md).

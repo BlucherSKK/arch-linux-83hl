@@ -4,6 +4,10 @@
 Snapdragon X Plus X1P42100 и **готовый образ диска** (не установщик), который
 раскатывается на NVMe ноутбука одной командой. Всё выкладывается в GitHub Release.
 
+Ядро берётся из [jglathe/linux_ms_dev_kit](https://github.com/jglathe/linux_ms_dev_kit)
+(ветка `jg/ubuntu-qcom-x1e-7.2.y`) — там уже есть рабочий DTS для 83HL.
+Что известно про звук, GPU, прошивки и сон: [docs/83hl-linux.md](docs/83hl-linux.md).
+
 ```
 push tag v*  ──►  kernel job  ──►  image job  ──►  release
                   (cross-clang)    (ALARM+qemu)    (ядро + .img.zst + sha256)
@@ -28,7 +32,8 @@ push tag v*  ──►  kernel job  ──►  image job  ──►  release
 1. **Ядро** `linux-83hl-<ver>-arm64.tar.zst`:
    `Image`, `lib/modules/<ver>`, `boot/dtbs/<ver>`, `.config`, `System.map`.
 2. **Образ** `arch-83hl.img.zst` — GPT: `ESP` (FAT32, 512 МиБ, UKI
-   `\EFI\BOOT\BOOTAA64.EFI`) + `arch83hl` (ext4, весь остаток).
+   `\EFI\BOOT\BOOTAA64.EFI` с ядром, initramfs и **DTB внутри**) +
+   `arch83hl` (ext4, весь остаток).
    Внутри — Arch Linux ARM (aarch64), systemd, NetworkManager, sshd,
    автологин root на tty1 и юнит `growroot`, который при первом бусте
    растягивает раздел на весь диск.
@@ -51,10 +56,12 @@ Actions → **build-83hl** → *Run workflow*. Можно задать `kernel_r
 
 | переменная | по умолчанию | смысл |
 |---|---|---|
-| `KERNEL_REPO` | `<owner>/linux-83hl` | git-URL ядра |
-| `KERNEL_REF` | `main` | ветка/тег/коммит |
+| `KERNEL_REPO` | `jglathe/linux_ms_dev_kit` | git-URL ядра |
+| `KERNEL_REF` | `jg/ubuntu-qcom-x1e-7.2.y` | ветка/тег/коммит |
+| `KDEFCONFIG` | `ubuntu_x1e_defconfig` | имя defconfig / путь к `.config` |
+| `DTB` | `qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb` | ожидаемый dtb |
+| `FIRMWARE_URL` | — | `.tar.gz` с прошивками ADSP/CDSP/GPU |
 | `IMAGE_SIZE` | `6G` | размер образа до growroot |
-| `DTB` | — | ожидаемый dtb, напр. `qcom/x1p42100-lenovo-83hl.dtb` |
 | `EXTRA_PKGS` | — | доп. пакеты pacman в образ |
 
 Ядро можно положить и сабмодулем: `git submodule add <url> kernel`.
@@ -65,13 +72,29 @@ Actions → **build-83hl** → *Run workflow*. Можно задать `kernel_r
 dts/        *.dts / *.dtsi  — копируются в arch/arm64/boot/dts/qcom/
                               и автоматически добавляются в Makefile
 patches/    *.patch         — применяются git apply -p1 по порядку имён
-config/     kernel.fragment — мержится поверх arm64 defconfig
+config/     kernel.fragment — мержится поверх KDEFCONFIG
             cmdline         — попадает в UKI
 rootfs/     оверлей поверх ALARM rootfs (units, конфиги, скрипты)
+firmware/   прошивки в /usr/lib/firmware (см. ниже)
 ```
 
-Пока в `dts/` пусто — образ соберётся, но на ноуте не заведётся:
-нужен DTS под X1P42100/83HL. Это следующий шаг порта.
+`dts/` пуст намеренно: DTS для 83HL уже есть в дереве Jens'а
+(`x1p42100-lenovo-ideapad-slim5x-oled.dts`), патчить его не нужно.
+Сюда стоит класть только собственные правки.
+
+## Прошивки ADSP/CDSP/GPU
+
+Звук и GPU не заработают без файлов из Windows-дампа:
+
+```bash
+bash scripts/extract-firmware.sh        # из ../83/drivers в ./firmware
+bash scripts/extract-firmware.sh --tar  # + firmware-83hl.tar.gz
+```
+
+`make-rootfs.sh` копирует `firmware/` в образ. В CI этих файлов нет:
+либо задайте `FIRMWARE_URL` (ссылка на `firmware-83hl.tar.gz`), либо
+закоммитьте `firmware/` в приватный репозиторий. Подробности и список
+файлов — [docs/83hl-linux.md](docs/83hl-linux.md).
 
 ## Запись образа
 
@@ -120,8 +143,10 @@ docker run --privileged --rm -v "$PWD:/work" -w /work archlinux:latest \
 
 ## Ограничения
 
-* без DTS ядро не стартует — образ пока «заготовка»;
-* Wi-Fi/BT требуют firmware (`linux-firmware`) и корректных remoteproc/QRTR узлов в DTS;
-* звук на X1E в mainline частичный;
+* звук и GPU требуют прошивок из Windows-дампа (`firmware/qcom/x1p42100/LENOVO/83HL/`);
+  без них `aplay -l` пуст, а GPU работает без акселерации;
+* сон — s2idle, ~2 Вт в простое; глубокий сон (~1.2 Вт) требует цепочки
+  EL2 из [issue #102](https://github.com/jglathe/linux_ms_dev_kit/issues/102)
+  и в образ не входит;
 * Secure Boot должен быть выключен;
 * `pacman -Syu` внутри образа делается на этапе сборки, дальше — как обычный Arch.

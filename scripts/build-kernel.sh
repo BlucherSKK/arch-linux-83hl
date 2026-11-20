@@ -7,7 +7,9 @@
 #   PKG_DIR      куда ставить модули/Image      (по умолчанию out/kernel-pkg)
 #   JOBS         параллельность                 (по умолчанию nproc)
 #   LLVM         1 = clang/lld, 0 = gcc         (по умолчанию 1)
-#   DTB          ожидаемый dtb (например qcom/x1p42100-lenovo-83hl.dtb)
+#   KDEFCONFIG   defconfig | ubuntu_x1e_defconfig | путь к .config
+#                (по умолчанию defconfig; в CI — ubuntu_x1e_defconfig)
+#   DTB          ожидаемый dtb (qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb)
 #   EXTRA_MAKE_ARGS  доп. аргументы make
 set -euo pipefail
 
@@ -20,6 +22,7 @@ BUILD_DIR=${BUILD_DIR:-$OUT/kbuild}
 PKG_DIR=${PKG_DIR:-$OUT/kernel-pkg}
 JOBS=${JOBS:-$(nproc)}
 LLVM=${LLVM:-1}
+KDEFCONFIG=${KDEFCONFIG:-defconfig}
 DTB=${DTB:-}
 EXTRA_MAKE_ARGS=${EXTRA_MAKE_ARGS:-}
 
@@ -79,8 +82,16 @@ fi
 
 # --- конфиг --------------------------------------------------------------
 mkdir -p "$BUILD_DIR"
-log "defconfig + фрагмент config/kernel.fragment"
-"${MAKE[@]}" -s defconfig
+if [ -f "$KDEFCONFIG" ]; then
+  log "конфиг из файла: $KDEFCONFIG"
+  cp -f "$KDEFCONFIG" "$BUILD_DIR/.config"
+elif [ -f "$ROOT/config/$KDEFCONFIG" ]; then
+  log "конфиг из файла: config/$KDEFCONFIG"
+  cp -f "$ROOT/config/$KDEFCONFIG" "$BUILD_DIR/.config"
+else
+  log "make $KDEFCONFIG + фрагмент config/kernel.fragment"
+  "${MAKE[@]}" -s "$KDEFCONFIG"
+fi
 KCONFIG_CONFIG="$BUILD_DIR/.config" \
   "$KERNEL_DIR/scripts/kconfig/merge_config.sh" -m -O "$BUILD_DIR" \
   "$BUILD_DIR/.config" "$ROOT/config/kernel.fragment"

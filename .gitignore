@@ -4,3 +4,8 @@ kernel/
 *.img.zst
 *.img.zst.part*
 .cache/
+
+# прошивки Qualcomm из Windows-дампа (см. firmware/README.md)
+firmware/*
+!firmware/README.md
+firmware-83hl.tar.gz
