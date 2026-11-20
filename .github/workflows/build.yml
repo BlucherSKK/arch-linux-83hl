@@ -182,13 +182,18 @@ jobs:
   release:
     name: release
     needs: [kernel, image]
-    if: ${{ !inputs.skip_release && (startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != '') }}
+    if: ${{ !inputs.skip_release && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: kernel-tar
           path: dist
-          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-files
+          path: dist
 
       - name: checksums
         run: |

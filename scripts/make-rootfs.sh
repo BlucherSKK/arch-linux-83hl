@@ -116,20 +116,24 @@ pacman-key --init
 pacman-key --populate archlinuxarm
 "${PAC[@]}" -Sy archlinuxarm-keyring || true
 
+echo "==> убираю стоковое ядро ALARM (чтобы -Su не собирал под него initramfs)"
+if [ "${KEEP_STOCK_KERNEL:-0}" != "1" ]; then
+  "${PAC[@]}" -Rdd linux-aarch64 || true
+fi
+
 if [ "${SKIP_PACMAN_UPGRADE:-0}" != "1" ]; then
   echo "==> pacman -Su"
-  "${PAC[@]}" -Su
+  if ! "${PAC[@]}" -Su; then
+    echo "==> -Su не прошёл, обновляю ключи и пробую ещё раз"
+    pacman-key --refresh-keys || true
+    "${PAC[@]}" -Su
+  fi
 fi
 
 echo "==> пакеты"
 # shellcheck disable=SC2086
 "${PAC[@]}" -S --needed sudo openssh networkmanager vim htop zstd less which \
   ${EXTRA_PKGS:-}
-
-echo "==> убираю стоковое ядро ALARM"
-if [ "${KEEP_STOCK_KERNEL:-0}" != "1" ]; then
-  "${PAC[@]}" -Rdd linux-aarch64 || true
-fi
 
 echo "==> базовая настройка"
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
