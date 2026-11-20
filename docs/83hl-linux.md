@@ -71,12 +71,22 @@ bash scripts/extract-firmware.sh --tar
 Скрипт раскладывает файлы в `firmware/qcom/x1p42100/LENOVO/83HL/`,
 `make-rootfs.sh` копирует их в `/usr/lib/firmware/` образа.
 
-В CI прошивок нет (они не в git). Варианты:
+В CI прошивок нет (они не в git). Рабочая схема — Google Drive:
 
-1. залить `firmware-83hl.tar.gz` как release asset (или в приватное
-   хранилище) и задать переменную репозитория `FIRMWARE_URL`;
-2. закоммитить `firmware/` в приватный репозиторий;
-3. собрать образ локально с `firmware/`.
+1. залить `firmware-83hl.tar.gz` на Google Drive и открыть доступ
+   «все, у кого есть ссылка»;
+2. положить ссылку в secret репозитория **`FIRMWARE_URL`**
+   (Settings → Secrets and variables → Actions → Secrets);
+3. при желании — `FIRMWARE_SHA256` с контрольной суммой архива.
+
+`make-rootfs.sh` понимает обычную ссылку вида
+`https://drive.google.com/file/d/<id>/view?usp=sharing` и сам превращает
+её в прямую `uc?export=download&confirm=t&id=<id>`. Если Drive вернёт
+HTML вместо архива (закрыт доступ, кончилась квота), сборка упадёт с
+понятной ошибкой.
+
+Альтернативы: закоммитить `firmware/` в приватный репозиторий или
+собрать образ локально с `firmware/`.
 
 **Лицензия:** это прошивки Qualcomm из OEM-пакета Lenovo. Для публичного
 репозитория их лучше не коммитить, а раздавать ссылкой на свой архив.

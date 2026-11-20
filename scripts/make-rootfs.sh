@@ -9,7 +9,9 @@
 #   KREL         версия ядра (по умолчанию из KERNEL_PKG)
 #   DTB          какой dtb зашить в UKI (по умолчанию slim5x-oled)
 #   EXTRA_PKGS   доп. пакеты pacman
-#   FIRMWARE_URL ссылка на .tar.gz с firmware/ (ADSP/CDSP/GPU из Windows)
+#   FIRMWARE_URL ссылка на .tar.gz с firmware/ (ADSP/CDSP/GPU из Windows);
+#                понимает обычные ссылки Google Drive (/file/d/<id>/view)
+#   FIRMWARE_SHA256  необязательная контрольная сумма архива
 #   SKIP_PACMAN_UPGRADE=1  не делать pacman -Syu
 set -euo pipefail
 
@@ -24,6 +26,7 @@ DISTRO_SHA256=${DISTRO_SHA256:-}
 EXTRA_PKGS=${EXTRA_PKGS:-}
 SKIP_PACMAN_UPGRADE=${SKIP_PACMAN_UPGRADE:-0}
 FIRMWARE_URL=${FIRMWARE_URL:-}
+FIRMWARE_SHA256=${FIRMWARE_SHA256:-}
 FIRMWARE_DIR=${FIRMWARE_DIR:-$OUT/firmware}
 DTB=${DTB:-qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb}
 
@@ -74,11 +77,36 @@ log "оверлей rootfs/"
 cp -a "$ROOT/rootfs/." "$ROOTFS_DIR/"
 
 # --- 4b. прошивки ADSP/CDSP/GPU из Windows -------------------------------
+# Google Drive отдаёт файл только по прямой ссылке uc?export=download&id=...
+firmware_direct_url() {
+  case "$1" in
+    *drive.google.com*)
+      local id
+      id=$(sed -n 's#.*/file/d/\([^/?]*\).*#\1#p' <<<"$1")
+      [ -n "$id" ] || id=$(sed -n 's#.*[?&]id=\([^&]*\).*#\1#p' <<<"$1")
+      [ -n "$id" ] || die "не смог вытащить file id из ссылки Google Drive"
+      printf 'https://drive.google.com/uc?export=download&confirm=t&id=%s\n' "$id"
+      ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 if [ -n "$FIRMWARE_URL" ] && [ ! -d "$FIRMWARE_DIR/qcom" ]; then
-  log "скачиваю firmware: $FIRMWARE_URL"
   mkdir -p "$FIRMWARE_DIR"
-  curl -fL --retry 3 -o "$CACHE/firmware.tar.gz" "$FIRMWARE_URL"
-  tar -xzf "$CACHE/firmware.tar.gz" -C "$FIRMWARE_DIR"
+  fw_tar="$CACHE/firmware.tar.gz"
+  fw_url=$(firmware_direct_url "$FIRMWARE_URL")
+  log "скачиваю firmware: $FIRMWARE_URL"
+  curl -fL --retry 3 --retry-delay 5 -o "$fw_tar.part" "$fw_url"
+  mv "$fw_tar.part" "$fw_tar"
+  if ! tar -tzf "$fw_tar" >/dev/null 2>&1; then
+    rm -f "$fw_tar"
+    die "скачался не tar.gz (Google Drive вернул HTML?) — проверьте доступ «все, у кого есть ссылка»"
+  fi
+  if [ -n "$FIRMWARE_SHA256" ]; then
+    echo "$FIRMWARE_SHA256  $fw_tar" | sha256sum -c - || die "SHA256 прошивок не совпал"
+  fi
+  tar -xzf "$fw_tar" -C "$FIRMWARE_DIR"
+  [ -d "$FIRMWARE_DIR/qcom" ] || die "в архиве нет qcom/ — это не тот файл"
 fi
 mkdir -p "$ROOTFS_DIR/usr/lib/firmware"
 for d in "$ROOT/firmware" "$FIRMWARE_DIR"; do

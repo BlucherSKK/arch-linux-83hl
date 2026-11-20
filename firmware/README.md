@@ -28,8 +28,12 @@ bash scripts/extract-firmware.sh --tar    # + firmware-83hl.tar.gz
 публичный репозиторий. Каталог исключён в `.gitignore` (кроме этого
 README).
 
-В CI задайте переменную репозитория `FIRMWARE_URL` — ссылку на
-`firmware-83hl.tar.gz` (release asset, приватный бакет и т.п.).
+В CI задайте secret или variable `FIRMWARE_URL` — ссылку на
+`firmware-83hl.tar.gz`. Подходит обычная ссылка Google Drive
+(`/file/d/<id>/view?usp=sharing`, доступ «все, у кого есть ссылка») —
+workflow сам превратит её в прямую. Необязательно можно задать
+`FIRMWARE_SHA256`.
+
 Если репозиторий приватный и вы хотите самодостаточную сборку, можно
 закоммитить файлы принудительно:
 

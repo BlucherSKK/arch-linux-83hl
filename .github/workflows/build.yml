@@ -24,7 +24,7 @@ on:
         required: false
         default: ""
       firmware_url:
-        description: "URL .tar.gz с прошивками ADSP/CDSP/GPU (пусто = переменная FIRMWARE_URL)"
+        description: "URL .tar.gz с прошивками (пусто = FIRMWARE_URL из vars/secrets)"
         required: false
         default: ""
       image_size:

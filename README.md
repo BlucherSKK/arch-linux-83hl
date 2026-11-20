@@ -97,9 +97,11 @@ bash scripts/extract-firmware.sh --tar  # + firmware-83hl.tar.gz
 ```
 
 `make-rootfs.sh` копирует `firmware/` в образ. В CI этих файлов нет:
-либо задайте `FIRMWARE_URL` (ссылка на `firmware-83hl.tar.gz`), либо
-закоммитьте `firmware/` в приватный репозиторий. Подробности и список
-файлов — [docs/83hl-linux.md](docs/83hl-linux.md).
+задайте secret/variable **`FIRMWARE_URL`** — ссылку на `firmware-83hl.tar.gz`
+(подходит обычная ссылка Google Drive вида
+`https://drive.google.com/file/d/<id>/view?usp=sharing`, доступ «все, у кого
+есть ссылка»). Можно дополнительно задать `FIRMWARE_SHA256`.
+Список файлов и подробности — [docs/83hl-linux.md](docs/83hl-linux.md).
 
 ## Запись образа
 
