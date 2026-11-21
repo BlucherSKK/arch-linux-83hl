@@ -53,11 +53,13 @@ jobs:
       - name: install build dependencies
         run: |
           set -euo pipefail
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xorriso squashfs-tools device-tree-compiler cpp mtools dosfstools \
             systemd-ukify sbsigntool python3-pefile build-essential gcc make kmod \
-            clang lld llvm curl ca-certificates unzip openssl
+            clang lld llvm curl ca-certificates unzip openssl file \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: clone mich-de kit and glathe dts
         run: |
@@ -94,19 +96,25 @@ jobs:
           )
           (
             cd hdr
-            apt-get download linux-modules-7.0.0-30-generic
+            apt-get download \
+              linux-headers-7.0.0-30-generic:arm64 \
+              linux-headers-7.0.0-43-generic:arm64 \
+              linux-modules-7.0.0-30-generic:arm64 || true
+            for deb in *.deb; do
+              dpkg-deb -x "$deb" /
+            done
           )
+          ls -la /usr/src/ | grep linux-headers || true
 
       - name: download and unpack firmware from FULL_FIRMWARE
         run: |
           set -euo pipefail
           test -n "${FULL_FIRMWARE_URL:-}"
-          mkdir -p work/fw_raw work/kit/repo/firmware
+          mkdir -p work/fw_raw work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL
           curl -fSL --retry 3 "$FULL_FIRMWARE_URL" -o work/fw_archive.bin
 
-          # Поддержка обычных архивов .tar.gz / .tgz / .zip и прямых ссылок Google Drive
           if file work/fw_archive.bin | grep -qiE 'HTML|ASCII text'; then
-            echo "Похоже на HTML-страницу Google Drive — пробуем скачать через gdown/confirm"
+            echo "Похоже на HTML-страницу Google Drive — пробуем скачать через confirm/id"
             FILE_ID="$(printf '%s' "$FULL_FIRMWARE_URL" | sed -nE 's/.*[?&]id=([^&]+).*/\1/p; s/.*\/d\/([^/]+).*/\1/p')"
             test -n "$FILE_ID"
             curl -fSL -c /tmp/gd_cookies.txt \
@@ -133,25 +141,26 @@ jobs:
             exit 1
           fi
 
-          # Раскладываем прошивки в структуру, которую ожидает сборка (если внутри есть qcom/ или firmware/qcom/)
-          if [ -d work/fw_raw/firmware/qcom ]; then
-            cp -a work/fw_raw/firmware/qcom/. work/kit/repo/firmware/qcom/ 2>/dev/null || \
-              { mkdir -p work/kit/repo/firmware && cp -a work/fw_raw/firmware/qcom work/kit/repo/firmware/; }
-          elif [ -d work/fw_raw/qcom ]; then
-            mkdir -p work/kit/repo/firmware
-            cp -a work/fw_raw/qcom work/kit/repo/firmware/
+          if [ -d work/fw_raw/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL ]; then
+            cp -a work/fw_raw/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/. \
+              work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/
+          elif [ -d work/fw_raw/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL ]; then
+            cp -a work/fw_raw/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/. \
+              work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/
           else
-            mkdir -p work/kit/repo/firmware
-            cp -a work/fw_raw/. work/kit/repo/firmware/
+            find work/fw_raw -maxdepth 1 -type f -exec cp -a {} \
+              work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/ \;
           fi
-          ls -la work/kit/repo/firmware
+          ls -la work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/
 
       - name: build video modules and 83hl iso
         run: |
           set -euo pipefail
           cd work/kit/repo
-          # На шаге build-iso.sh обычно вызывается extract-firmware.sh, который читает /mnt/c.
-          # Если firmware уже подготовлена из FULL_FIRMWARE, проверяем наличие скриптов и запускаем сборку.
+          if ! command -v gcc-15 >/dev/null 2>&1; then
+            sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/gcc-15
+          fi
+          sed -i 's/make -s -C/make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -C/' scripts/build-video.sh
           bash scripts/build-video.sh 7.0.0-30-generic 7.0.0-43-generic
           mkdir -p /mnt/c
           bash scripts/build-iso.sh
