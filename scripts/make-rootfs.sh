@@ -137,13 +137,19 @@ cleanup() {
   set +e
   for m in "$ROOTFS_DIR/run" "$ROOTFS_DIR/sys" "$ROOTFS_DIR/proc" \
            "$ROOTFS_DIR/dev/pts" "$ROOTFS_DIR/dev"; do
-    mountpoint -q "$m" && umount -R "$m"
+    mountpoint -q "$m" && { umount -R "$m" 2>/dev/null || umount -R -l "$m"; }
   done
+  # bind rootfs на себя снимаем последним
+  mountpoint -q "$ROOTFS_DIR" && { umount "$ROOTFS_DIR" 2>/dev/null || umount -l "$ROOTFS_DIR"; }
   rm -f "$ROOTFS_DIR/usr/bin/qemu-aarch64-static"
 }
 trap cleanup EXIT
 
 mkdir -p "$ROOTFS_DIR/dev" "$ROOTFS_DIR/dev/pts" "$ROOTFS_DIR/proc" "$ROOTFS_DIR/sys" "$ROOTFS_DIR/run"
+# pacman 7 проверяет свободное место и ищет точку монтирования cachedir; если
+# корень chroot — обычный каталог (не mountpoint), он падает с
+# "could not determine cachedir mount point" -> "not enough free disk space".
+mount --bind "$ROOTFS_DIR" "$ROOTFS_DIR"
 mount --bind /dev "$ROOTFS_DIR/dev"
 mount --bind /dev/pts "$ROOTFS_DIR/dev/pts" 2>/dev/null || true
 mount -t proc proc "$ROOTFS_DIR/proc"
@@ -169,7 +175,9 @@ set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LC_ALL=C
 KREL="$(cat /root/krel)"
-PAC=(pacman --noconfirm --disable-download-timeout)
+# --disable-sandbox: в chroot под qemu-user нет Landlock, а пользователя alpm
+# в базовом rootfs ещё нет — без этого pacman 7 не может скачать базы/пакеты.
+PAC=(pacman --noconfirm --disable-download-timeout --disable-sandbox)
 
 echo "==> keyring"
 pacman-key --init
@@ -195,6 +203,10 @@ echo "==> пакеты"
 "${PAC[@]}" -S --needed sudo openssh networkmanager bluez vim htop zstd less which \
   linux-firmware-qcom alsa-utils alsa-ucm-conf \
   ${EXTRA_PKGS:-}
+
+# кэш пакетов в образе не нужен
+echo "==> чистка кэша pacman"
+"${PAC[@]}" -Scc || true
 
 echo "==> сервисы"
 systemctl enable NetworkManager sshd systemd-resolved systemd-timesyncd \
