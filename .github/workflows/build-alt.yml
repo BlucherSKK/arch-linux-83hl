@@ -1,4 +1,4 @@
-name: "build-83hl (alt: Glathe 7.3.y)"
+name: build-83hl-alt
 
 # Альтернативная сборка: ядро и DTS из ветки jg/ubuntu-qcom-x1e-7.3.y
 # (та ветка, на которой mich-de/ubuntu-ideapad-slim5x-83hl построил рабочий
