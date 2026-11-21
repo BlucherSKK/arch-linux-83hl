@@ -58,24 +58,16 @@ jobs:
               sudo sed -i -E 's/^deb\s+(\[([^\]]*)\]\s+)?(https?:\/\/(azure\.)?archive\.ubuntu\.com|https?:\/\/security\.ubuntu\.com|https?:\/\/packages\.microsoft\.com)/deb [arch=amd64] \3/' "$f"
               sudo sed -i -E 's/\[arch=amd64\]\s+\[([^\]]*)\]/[arch=amd64,\1]/' "$f"
             elif [[ "$f" == *.sources ]]; then
-              sudo awk '
-                BEGIN { RS=""; ORS="\n\n" }
-                {
-                  if ($0 ~ /URIs:.*(archive\.ubuntu\.com|security\.ubuntu\.com|packages\.microsoft\.com)/ && $0 !~ /Architectures:/) {
-                    sub(/\n?$/, "\nArchitectures: amd64", $0)
-                  }
-                  print $0
-                }
-              ' "$f" | sudo tee "${f}.tmp" >/dev/null
+              sudo awk 'BEGIN { RS=""; ORS="\n\n" } { if ($0 ~ /URIs:.*(archive\.ubuntu\.com|security\.ubuntu\.com|packages\.microsoft\.com)/ && $0 !~ /Architectures:/) { sub(/\n?$/, "\nArchitectures: amd64", $0) } print $0 }' "$f" | sudo tee "${f}.tmp" >/dev/null
               sudo mv "${f}.tmp" "$f"
             fi
           done
 
           cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
-EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+          EOF
 
           sudo dpkg --add-architecture arm64
           sudo apt-get update
