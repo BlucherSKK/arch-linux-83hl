@@ -228,6 +228,23 @@ chmod 0750 /etc/sudoers.d
 echo "==> mkinitcpio ($KREL)"
 mkinitcpio -k "$KREL" -c /etc/mkinitcpio.conf -g /boot/initramfs-linux83hl.img
 
+# Прошивки ADSP/CDSP/GPU должны быть в initramfs: remoteproc стартует на
+# ~1 секунде и без firmware падает с -2 без ретрая (нет звука/батареи/USB-C,
+# GPU поздно). Дописываем их вторым cpio-архивом в конец initramfs.
+echo "==> firmware в initramfs"
+FWCP=/tmp/fw-early.cpio
+if ( cd / && find usr/lib/firmware/qcom/x1p42100/LENOVO/83HL \
+        usr/lib/firmware/qcom/x1p42100/gen71500_zap.mbn \
+        usr/lib/firmware/qcom/gen71500_sqe.fw \
+        usr/lib/firmware/qcom/gen71500_gmu.bin \
+        -print 2>/dev/null | cpio -o -H newc --quiet >"$FWCP" ) \
+   && [ -s "$FWCP" ]; then
+  cat "$FWCP" >> /boot/initramfs-linux83hl.img
+  rm -f "$FWCP"
+else
+  echo "WARN: не смог добавить firmware в initramfs"
+fi
+
 echo "==> audio topology для LENOVO-Ideapad-5"
 FW=/usr/lib/firmware/qcom/x1e80100
 SRC=""
