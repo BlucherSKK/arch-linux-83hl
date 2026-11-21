@@ -15,6 +15,11 @@
 | DTB (OLED) | `qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb` |
 | DTB (LCD) | `qcom/x1p42100-lenovo-ideapad-slim5x-lcd.dtb` |
 
+`83HL` выпускается в двух вариантах: OLED (2.8K) и LCD/IPS (WUXGA
+1920×1200). DTB отличаются только подсветкой (PWM). В CI/скриптах по
+умолчанию берётся **LCD** — это вариант с WUXGA. Для OLED-ноута задайте
+`DTB=qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb`.
+
 Почему 7.2.x, хотя Jens считает лучшим 7.1.13-jg-0: DTS для Slim 5x
 (`x1p42100-lenovo-ideapad-slim5x*.dts`) появился только в 7.2.x. В 7.2.x
 были проблемы с lid switch, в 7.2.9 они исправлены — на этой версии

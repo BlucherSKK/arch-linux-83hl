@@ -7,7 +7,7 @@
 #   KERNEL_PKG   результат build-kernel.sh      (out/kernel-pkg)
 #   DISTRO_URL   архив ALARM                    (os.archlinuxarm.org, latest)
 #   KREL         версия ядра (по умолчанию из KERNEL_PKG)
-#   DTB          какой dtb зашить в UKI (по умолчанию slim5x-oled)
+#   DTB          какой dtb зашить в UKI (по умолчанию slim5x-lcd)
 #   EXTRA_PKGS   доп. пакеты pacman
 #   FIRMWARE_URL ссылка на .tar.gz с firmware/ (ADSP/CDSP/GPU из Windows);
 #                понимает обычные ссылки Google Drive (/file/d/<id>/view)
@@ -28,7 +28,7 @@ SKIP_PACMAN_UPGRADE=${SKIP_PACMAN_UPGRADE:-0}
 FIRMWARE_URL=${FIRMWARE_URL:-}
 FIRMWARE_SHA256=${FIRMWARE_SHA256:-}
 FIRMWARE_DIR=${FIRMWARE_DIR:-$OUT/firmware}
-DTB=${DTB:-qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb}
+DTB=${DTB:-qcom/x1p42100-lenovo-ideapad-slim5x-lcd.dtb}
 
 [ "$(id -u)" -eq 0 ] || die "нужен root: sudo bash scripts/make-rootfs.sh"
 need_cmd curl tar chroot mount umount zstd
@@ -252,12 +252,22 @@ echo "==> UKI"
 STUB=/usr/lib/systemd/boot/efi/linuxaa64.efi.stub
 [ -f "$STUB" ] || { echo "нет $STUB"; exit 1; }
 mkdir -p /efi/EFI/BOOT /efi/EFI/Linux
+
+# binutils 2.46 из ALARM трактует --change-section-vma как АБСОЛЮТНЫЙ адрес
+# и вычитает ImageBase. Если передать маленькие RVA (0x20000 и т.п.), разделы
+# уезжают в 0x2E0A0000+, SizeOfImage остаётся 0x29000, и прошивка отказывается
+# грузить UKI ("EFI USB Device boot failed"). Передаём ImageBase + RVA.
+IMAGE_BASE=$(objdump -p "$STUB" | awk '/^ImageBase/ {print $2; exit}')
+[ -n "$IMAGE_BASE" ] || { echo "не смог определить ImageBase у $STUB"; exit 1; }
+IMAGE_BASE=$((16#$IMAGE_BASE))
+vma() { printf '0x%x' $((IMAGE_BASE + $1)); }
+
 objcopy \
-  --add-section .osrel=/usr/lib/os-release        --change-section-vma .osrel=0x20000 \
-  --add-section .cmdline=/root/cmdline            --change-section-vma .cmdline=0x30000 \
-  --add-section .dtb=/boot/dtb-83hl.dtb           --change-section-vma .dtb=0x400000 \
-  --add-section .linux=/boot/Image-83hl           --change-section-vma .linux=0x2000000 \
-  --add-section .initrd=/boot/initramfs-linux83hl.img --change-section-vma .initrd=0x3000000 \
+  --add-section .osrel=/usr/lib/os-release        --change-section-vma .osrel=$(vma 0x20000) \
+  --add-section .cmdline=/root/cmdline            --change-section-vma .cmdline=$(vma 0x30000) \
+  --add-section .dtb=/boot/dtb-83hl.dtb           --change-section-vma .dtb=$(vma 0x400000) \
+  --add-section .linux=/boot/Image-83hl           --change-section-vma .linux=$(vma 0x2000000) \
+  --add-section .initrd=/boot/initramfs-linux83hl.img --change-section-vma .initrd=$(vma 0x3000000) \
   "$STUB" /efi/EFI/BOOT/BOOTAA64.EFI
 cp -f /efi/EFI/BOOT/BOOTAA64.EFI /efi/EFI/Linux/arch-83hl.efi
 

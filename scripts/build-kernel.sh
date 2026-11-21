@@ -9,7 +9,7 @@
 #   LLVM         1 = clang/lld, 0 = gcc         (по умолчанию 1)
 #   KDEFCONFIG   defconfig | ubuntu_x1e_defconfig | путь к .config
 #                (по умолчанию defconfig; в CI — ubuntu_x1e_defconfig)
-#   DTB          ожидаемый dtb (qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb)
+#   DTB          ожидаемый dtb (qcom/x1p42100-lenovo-ideapad-slim5x-lcd.dtb)
 #   EXTRA_MAKE_ARGS  доп. аргументы make
 set -euo pipefail
 
