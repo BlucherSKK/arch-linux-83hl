@@ -54,7 +54,7 @@ env:
   KDEFCONFIG: ${{ vars.KDEFCONFIG || 'ubuntu_x1e_defconfig' }}
   DTB: ${{ inputs.dtb || vars.DTB || 'qcom/x1p42100-lenovo-ideapad-slim5x-lcd.dtb' }}
   # .tar.gz с firmware/qcom/... (ADSP/CDSP/GPU из дампа Windows), см. docs/83hl-linux.md
-  FIRMWARE_URL: ${{ inputs.firmware_url || vars.FIRMWARE_URL }}
+  FIRMWARE_URL: ${{ inputs.firmware_url || vars.FIRMWARE_URL || secrets.FIRMWARE_URL }}
   IMAGE_SIZE: ${{ inputs.image_size || vars.IMAGE_SIZE || '6G' }}
   ZSTD_LEVEL: "12"
   CCACHE: "1"
