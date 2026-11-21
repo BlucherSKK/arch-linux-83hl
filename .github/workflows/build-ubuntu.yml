@@ -89,7 +89,7 @@ jobs:
           (
             cd debs
             apt-get download \
-              systemd-ukify sbsigntool stubble python3-pefile mokutil \
+              systemd-ukify sbsigntool python3-pefile mokutil \
               python3-zstandard python3-libfdt libfdt1
           )
           (
