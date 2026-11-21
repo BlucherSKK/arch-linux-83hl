@@ -1,0 +1,180 @@
+name: build-ubuntu-83hl
+
+on:
+  workflow_dispatch:
+    inputs:
+      ubuntu_iso_url:
+        description: "URL базового ubuntu-26.04.1-desktop-arm64.iso"
+        required: false
+        default: "https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04.1-desktop-arm64.iso"
+      release_tag:
+        description: "Тег релиза, например v0.1.0 (пусто = только артефакты)"
+        required: false
+        default: ""
+      skip_release:
+        description: "Не публиковать релиз"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ubuntu-83hl-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FULL_FIRMWARE_URL: ${{ secrets.FULL_FIRMWARE }}
+  UBUNTU_ISO_URL: ${{ inputs.ubuntu_iso_url }}
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  build-iso:
+    name: build ubuntu 83hl iso (arm64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache || true
+          sudo apt-get clean
+          df -h /
+
+      - name: setup qemu binfmt for arm64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xorriso squashfs-tools device-tree-compiler cpp mtools dosfstools \
+            systemd-ukify sbsigntool python3-pefile gcc-15 make kmod \
+            curl ca-certificates unzip openssl
+
+      - name: clone mich-de kit and glathe dts
+        run: |
+          set -euo pipefail
+          mkdir -p work/kit
+          git clone --depth 1 https://github.com/mich-de/ubuntu-ideapad-slim5x-83hl.git work/kit/repo
+          git clone --depth 1 --filter=blob:none --sparse -b jg/ubuntu-qcom-x1e-7.3.y \
+            https://github.com/jglathe/linux_ms_dev_kit.git work/kit/repo/src/glathe
+          git -C work/kit/repo/src/glathe sparse-checkout set \
+            arch/arm64/boot/dts/qcom include/dt-bindings include/uapi/linux scripts/dtc/include-prefixes
+
+      - name: generate local mok keys
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          mkdir -p keys
+          openssl req -new -x509 -newkey rsa:2048 -nodes -days 36500 -sha256 \
+            -subj "/CN=83HL kernel signing (local MOK)/" \
+            -addext "extendedKeyUsage=codeSigning" \
+            -keyout keys/MOK.key -out keys/MOK.crt
+          openssl x509 -in keys/MOK.crt -outform DER -out keys/MOK.der
+
+      - name: fetch ubuntu iso and helper debs
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          mkdir -p iso debs hdr
+          curl -fSL --retry 3 "$UBUNTU_ISO_URL" -o iso/ubuntu-26.04.1-desktop-arm64.iso
+          (
+            cd debs
+            apt-get download \
+              systemd-ukify sbsigntool stubble python3-pefile mokutil \
+              python3-zstandard python3-libfdt libfdt1
+          )
+          (
+            cd hdr
+            apt-get download linux-modules-7.0.0-30-generic
+          )
+
+      - name: download and unpack firmware from FULL_FIRMWARE
+        run: |
+          set -euo pipefail
+          test -n "${FULL_FIRMWARE_URL:-}"
+          mkdir -p work/fw_raw work/kit/repo/firmware
+          curl -fSL --retry 3 "$FULL_FIRMWARE_URL" -o work/fw_archive.bin
+
+          # Поддержка обычных архивов .tar.gz / .tgz / .zip и прямых ссылок Google Drive
+          if file work/fw_archive.bin | grep -qiE 'HTML|ASCII text'; then
+            echo "Похоже на HTML-страницу Google Drive — пробуем скачать через gdown/confirm"
+            FILE_ID="$(printf '%s' "$FULL_FIRMWARE_URL" | sed -nE 's/.*[?&]id=([^&]+).*/\1/p; s/.*\/d\/([^/]+).*/\1/p')"
+            test -n "$FILE_ID"
+            curl -fSL -c /tmp/gd_cookies.txt \
+              "https://drive.google.com/uc?export=download&id=${FILE_ID}" -o /tmp/gd_page.html
+            CONFIRM_TOKEN="$(sed -nE 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' /tmp/gd_page.html | head -n1)"
+            if [ -n "$CONFIRM_TOKEN" ]; then
+              curl -fSL -b /tmp/gd_cookies.txt \
+                "https://drive.google.com/uc?export=download&confirm=${CONFIRM_TOKEN}&id=${FILE_ID}" \
+                -o work/fw_archive.bin
+            else
+              curl -fSL -b /tmp/gd_cookies.txt \
+                "https://drive.google.com/uc?export=download&id=${FILE_ID}" \
+                -o work/fw_archive.bin
+            fi
+          fi
+
+          if tar -tzf work/fw_archive.bin >/dev/null 2>&1; then
+            tar -xzf work/fw_archive.bin -C work/fw_raw
+          elif unzip -tq work/fw_archive.bin >/dev/null 2>&1; then
+            unzip -q work/fw_archive.bin -d work/fw_raw
+          else
+            echo "Не удалось распознать архив прошивок из FULL_FIRMWARE"
+            file work/fw_archive.bin || true
+            exit 1
+          fi
+
+          # Раскладываем прошивки в структуру, которую ожидает сборка (если внутри есть qcom/ или firmware/qcom/)
+          if [ -d work/fw_raw/firmware/qcom ]; then
+            cp -a work/fw_raw/firmware/qcom/. work/kit/repo/firmware/qcom/ 2>/dev/null || \
+              { mkdir -p work/kit/repo/firmware && cp -a work/fw_raw/firmware/qcom work/kit/repo/firmware/; }
+          elif [ -d work/fw_raw/qcom ]; then
+            mkdir -p work/kit/repo/firmware
+            cp -a work/fw_raw/qcom work/kit/repo/firmware/
+          else
+            mkdir -p work/kit/repo/firmware
+            cp -a work/fw_raw/. work/kit/repo/firmware/
+          fi
+          ls -la work/kit/repo/firmware
+
+      - name: build video modules and 83hl iso
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          # На шаге build-iso.sh обычно вызывается extract-firmware.sh, который читает /mnt/c.
+          # Если firmware уже подготовлена из FULL_FIRMWARE, проверяем наличие скриптов и запускаем сборку.
+          bash scripts/build-video.sh 7.0.0-30-generic 7.0.0-43-generic
+          mkdir -p /mnt/c
+          bash scripts/build-iso.sh
+          ls -lh out/
+
+      - name: upload iso artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-26.04-83hl-iso
+          path: |
+            work/kit/repo/out/*.iso
+            work/kit/repo/keys/MOK.der
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: publish release if requested
+        if: ${{ !inputs.skip_release && inputs.release_tag != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          gh release create "$tag" work/kit/repo/out/*.iso work/kit/repo/keys/MOK.der \
+            --title "Ubuntu 26.04 83HL (${tag})" \
+            --notes "Сборка Ubuntu 26.04.1 ARM64 для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL)." || \
+          gh release upload "$tag" work/kit/repo/out/*.iso work/kit/repo/keys/MOK.der --clobber
