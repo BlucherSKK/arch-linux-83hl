@@ -231,12 +231,32 @@ mkinitcpio -k "$KREL" -c /etc/mkinitcpio.conf -g /boot/initramfs-linux83hl.img
 # Прошивки ADSP/CDSP/GPU должны быть в initramfs: remoteproc стартует на
 # ~1 секунде и без firmware падает с -2 без ретрая (нет звука/батареи/USB-C,
 # GPU поздно). Дописываем их вторым cpio-архивом в конец initramfs.
+# ВАЖНО: modules.dep/alias/symbols/builtin тоже кладём — иначе udev в
+# initramfs не сможет разрешить modalias (modprobe не найдёт модуль по
+# совместимой строке DT) и USB-PHY/контроллеры не поднимутся → root на
+# USB не найдётся.
 echo "==> firmware в initramfs"
 FWCP=/tmp/fw-early.cpio
-if ( cd / && find usr/lib/firmware/qcom/x1p42100/LENOVO/83HL \
+# zst-копии для fw-loader (он пробует .zst-варианты имён)
+for f in usr/lib/firmware/qcom/gen71500_sqe.fw usr/lib/firmware/qcom/gen71500_gmu.bin; do
+  if [ -f "/$f" ]; then zstd -q -f "/$f" -o "/$f.zst" 2>/dev/null || true; fi
+done
+if ( cd / && find \
+        usr/lib/firmware/qcom/x1p42100/LENOVO/83HL \
         usr/lib/firmware/qcom/x1p42100/gen71500_zap.mbn \
         usr/lib/firmware/qcom/gen71500_sqe.fw \
+        usr/lib/firmware/qcom/gen71500_sqe.fw.zst \
         usr/lib/firmware/qcom/gen71500_gmu.bin \
+        usr/lib/firmware/qcom/gen71500_gmu.bin.zst \
+        usr/lib/modules/*/modules.dep \
+        usr/lib/modules/*/modules.dep.bin \
+        usr/lib/modules/*/modules.alias \
+        usr/lib/modules/*/modules.alias.bin \
+        usr/lib/modules/*/modules.symbols \
+        usr/lib/modules/*/modules.symbols.bin \
+        usr/lib/modules/*/modules.builtin \
+        usr/lib/modules/*/modules.builtin.bin \
+        usr/lib/modules/*/modules.builtin.modinfo \
         -print 2>/dev/null | cpio -o -H newc --quiet >"$FWCP" ) \
    && [ -s "$FWCP" ]; then
   cat "$FWCP" >> /boot/initramfs-linux83hl.img
