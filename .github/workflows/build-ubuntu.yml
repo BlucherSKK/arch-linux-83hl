@@ -125,7 +125,7 @@ jobs:
               "${ARM64_APT[@]}" download "$CANDIDATES"
             fi
             for deb in *.deb; do
-              dpkg-deb -x "$deb" /
+              sudo dpkg-deb -x "$deb" /
             done
           )
           ls -la /usr/src/ | grep linux-headers || true
