@@ -53,6 +53,33 @@ jobs:
       - name: install build dependencies
         run: |
           set -euo pipefail
+          sudo find /etc/apt/ -name "*.list" -o -name "*.sources" | while read -r f; do
+            if [[ "$f" == *.list ]]; then
+              sudo sed -i -E 's/^deb\s+(\[([^\]]*)\]\s+)?(https?:\/\/(azure\.)?archive\.ubuntu\.com|https?:\/\/security\.ubuntu\.com|https?:\/\/packages\.microsoft\.com)/deb [arch=amd64] \3/' "$f"
+              sudo sed -i -E 's/\[arch=amd64\]\s+\[([^\]]*)\]/[arch=amd64,\1]/' "$f"
+            elif [[ "$f" == *.sources ]]; then
+              sudo python3 - "$f" <<'PY'
+import sys
+p = sys.argv[1]
+txt = open(p, "r", encoding="utf-8").read()
+blocks = txt.split("\n\n")
+out = []
+for b in blocks:
+    if "URIs:" in b and ("archive.ubuntu.com" in b or "security.ubuntu.com" in b or "packages.microsoft.com" in b):
+        if "Architectures:" not in b:
+            b = b.rstrip() + "\nArchitectures: amd64"
+    out.append(b)
+open(p, "w", encoding="utf-8").write("\n\n".join(out))
+PY
+            fi
+          done
+
+          cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+EOF
+
           sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -96,10 +123,14 @@ jobs:
           )
           (
             cd hdr
-            apt-get download \
-              linux-headers-7.0.0-30-generic:arm64 \
-              linux-headers-7.0.0-43-generic:arm64 \
-              linux-modules-7.0.0-30-generic:arm64 || true
+            for pkg in linux-headers-7.0.0-30-generic:arm64 linux-headers-7.0.0-43-generic:arm64 linux-modules-7.0.0-30-generic:arm64; do
+              apt-get download "$pkg" || echo "WARN: package $pkg not found in current repo index"
+            done
+            if ! ls linux-headers-7.0.0-*-generic*.deb >/dev/null 2>&1; then
+              LATEST_HDR="$(apt-cache search --names-only '^linux-headers-7\.0\.0-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -n1)"
+              test -n "$LATEST_HDR"
+              apt-get download "${LATEST_HDR}:arm64"
+            fi
             for deb in *.deb; do
               dpkg-deb -x "$deb" /
             done
