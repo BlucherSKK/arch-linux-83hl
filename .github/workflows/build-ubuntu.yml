@@ -58,35 +58,32 @@ jobs:
               sudo sed -i -E 's/^deb\s+(\[([^\]]*)\]\s+)?(https?:\/\/(azure\.)?archive\.ubuntu\.com|https?:\/\/security\.ubuntu\.com|https?:\/\/packages\.microsoft\.com)/deb [arch=amd64] \3/' "$f"
               sudo sed -i -E 's/\[arch=amd64\]\s+\[([^\]]*)\]/[arch=amd64,\1]/' "$f"
             elif [[ "$f" == *.sources ]]; then
-              sudo python3 - "$f" <<'PY'
-            import sys
-            p = sys.argv[1]
-            txt = open(p, "r", encoding="utf-8").read()
-            blocks = txt.split("\n\n")
-            out = []
-            for b in blocks:
-                if "URIs:" in b and ("archive.ubuntu.com" in b or "security.ubuntu.com" in b or "packages.microsoft.com" in b):
-                    if "Architectures:" not in b:
-                        b = b.rstrip() + "\nArchitectures: amd64"
-                out.append(b)
-            open(p, "w", encoding="utf-8").write("\n\n".join(out))
-            PY
-                        fi
-                    done
+              sudo awk '
+                BEGIN { RS=""; ORS="\n\n" }
+                {
+                  if ($0 ~ /URIs:.*(archive\.ubuntu\.com|security\.ubuntu\.com|packages\.microsoft\.com)/ && $0 !~ /Architectures:/) {
+                    sub(/\n?$/, "\nArchitectures: amd64", $0)
+                  }
+                  print $0
+                }
+              ' "$f" | sudo tee "${f}.tmp" >/dev/null
+              sudo mv "${f}.tmp" "$f"
+            fi
+          done
 
-                    cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null
-            deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
-            deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-            deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
-            EOF
+          cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+EOF
 
-                    sudo dpkg --add-architecture arm64
-                    sudo apt-get update
-                    sudo apt-get install -y --no-install-recommends \
-                        xorriso squashfs-tools device-tree-compiler cpp mtools dosfstools \
-                        systemd-ukify sbsigntool python3-pefile build-essential gcc make kmod \
-                        clang lld llvm curl ca-certificates unzip openssl file \
-                        gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xorriso squashfs-tools device-tree-compiler cpp mtools dosfstools \
+            systemd-ukify sbsigntool python3-pefile build-essential gcc make kmod \
+            clang lld llvm curl ca-certificates unzip openssl file \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: clone mich-de kit and glathe dts
         run: |
