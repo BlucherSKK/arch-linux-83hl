@@ -48,7 +48,7 @@ push tag v*  ──►  kernel job  ──►  image job  ──►  release
 |---|---|
 | `kernel_repo` | git-URL ядра (пусто — jglathe/linux_ms_dev_kit) |
 | `kernel_ref` | ветка/тег/коммит (пусто — jg/ubuntu-qcom-x1e-7.2.y) |
-| `dtb` | какой DTB зашить в UKI (пусто — slim5x-oled) |
+| `dtb` | какой DTB зашить в UKI (пусто — slim5x-lcd) |
 | `firmware_url` | `.tar.gz` с прошивками (пусто — переменная `FIRMWARE_URL`) |
 | `image_size` | размер образа до growroot (по умолчанию `6G`) |
 | `release_tag` | если заполнить, например `v0.1.0`, — создать GitHub Release |
@@ -64,7 +64,7 @@ push tag v*  ──►  kernel job  ──►  image job  ──►  release
 | `KERNEL_REPO` | `jglathe/linux_ms_dev_kit` | git-URL ядра |
 | `KERNEL_REF` | `jg/ubuntu-qcom-x1e-7.2.y` | ветка/тег/коммит |
 | `KDEFCONFIG` | `ubuntu_x1e_defconfig` | имя defconfig / путь к `.config` |
-| `DTB` | `qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb` | ожидаемый dtb |
+| `DTB` | `qcom/x1p42100-lenovo-ideapad-slim5x-lcd.dtb` | ожидаемый dtb |
 | `FIRMWARE_URL` | — | `.tar.gz` с прошивками ADSP/CDSP/GPU |
 | `IMAGE_SIZE` | `6G` | размер образа до growroot |
 | `EXTRA_PKGS` | — | доп. пакеты pacman в образ |
@@ -84,9 +84,10 @@ firmware/   прошивки в /usr/lib/firmware (см. ниже)
 ```
 
 `dts/` пуст намеренно: DTS для 83HL уже есть в дереве Jens'а
-(`x1p42100-lenovo-ideapad-slim5x-oled.dts` — OLED-вариант, `...-lcd.dts` —
-IPS/WUXGA), патчить их не нужно. По умолчанию берётся OLED (DSDT 83HL
-говорит "OLED panel").
+(`x1p42100-lenovo-ideapad-slim5x-lcd.dts` — IPS/WUXGA, `...-oled.dts` —
+OLED-вариант), патчить их не нужно. По умолчанию берётся LCD: EDID панели
+(LEN9120, 1920×1200) у этого ноута — IPS. Строки «OLED panel» в DSDT — лишь
+список поддерживаемых панелей в драйвере.
 Сюда стоит класть только собственные правки.
 
 ## Прошивки ADSP/CDSP/GPU

@@ -7,7 +7,7 @@
 #   KERNEL_PKG   результат build-kernel.sh      (out/kernel-pkg)
 #   DISTRO_URL   архив ALARM                    (os.archlinuxarm.org, latest)
 #   KREL         версия ядра (по умолчанию из KERNEL_PKG)
-#   DTB          какой dtb зашить в UKI (по умолчанию slim5x-oled)
+#   DTB          какой dtb зашить в UKI (по умолчанию slim5x-lcd)
 #   EXTRA_PKGS   доп. пакеты pacman
 #   FIRMWARE_URL ссылка на .tar.gz с firmware/ (ADSP/CDSP/GPU из Windows);
 #                понимает обычные ссылки Google Drive (/file/d/<id>/view)
@@ -28,7 +28,7 @@ SKIP_PACMAN_UPGRADE=${SKIP_PACMAN_UPGRADE:-0}
 FIRMWARE_URL=${FIRMWARE_URL:-}
 FIRMWARE_SHA256=${FIRMWARE_SHA256:-}
 FIRMWARE_DIR=${FIRMWARE_DIR:-$OUT/firmware}
-DTB=${DTB:-qcom/x1p42100-lenovo-ideapad-slim5x-oled.dtb}
+DTB=${DTB:-qcom/x1p42100-lenovo-ideapad-slim5x-lcd.dtb}
 
 [ "$(id -u)" -eq 0 ] || die "нужен root: sudo bash scripts/make-rootfs.sh"
 need_cmd curl tar chroot mount umount zstd
