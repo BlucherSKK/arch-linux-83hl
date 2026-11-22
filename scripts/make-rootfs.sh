@@ -225,6 +225,21 @@ echo "arch:arch" | chpasswd
 mkdir -p /etc/sudoers.d
 chmod 0750 /etc/sudoers.d
 
+# Разные ядра (7.3.3-83hl+ и 7.0.0-43-generic) называют PHY-модули по-разному.
+# Оставляем в MODULES= только реально существующие модули этого ядра, иначе
+# mkinitcpio падает с "ERROR: module not found" и вся сборка рушится.
+echo "==> проверка MODULES для $KREL"
+WANTED=($(sed -n 's/^MODULES=(\(.*\))/\1/p' /etc/mkinitcpio.conf))
+KEPT=()
+for m in "${WANTED[@]}"; do
+  if find "/usr/lib/modules/$KREL" -type f \( -name "$m.ko" -o -name "$m.ko.zst" \) -print -quit | grep -q .; then
+    KEPT+=("$m")
+  else
+    echo "==> модуль $m отсутствует в $KREL — пропускаю"
+  fi
+done
+sed -i "s/^MODULES=(.*)/MODULES=(${KEPT[*]})/" /etc/mkinitcpio.conf
+
 echo "==> mkinitcpio ($KREL)"
 mkinitcpio -k "$KREL" -c /etc/mkinitcpio.conf -g /boot/initramfs-linux83hl.img
 

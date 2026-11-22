@@ -79,7 +79,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             curl ca-certificates git file cpp device-tree-compiler \
-            binutils python3 zstd
+            binutils python3 zstd kmod
 
       # Нужны: scripts/build-dtb.sh и локальная добавка dts/*-83hl.dts из кита
       # mich-de, плюс сами DTS из Glathe 7.3.y (sparse checkout — несколько МБ).
@@ -171,11 +171,22 @@ jobs:
           print(f'kernel from deb: {actual}, Image={len(image)} bytes')
           PY
           ACTUAL=$(cat work/kver.txt)
-          test -d "work/unpack-modules/lib/modules/$ACTUAL" || {
-            echo "модули $ACTUAL не найдены; запрошено $KVER" >&2; exit 1; }
+          # В deb'ах Ubuntu после usr-merge модули лежат в usr/lib/modules,
+          # а modules.dep/alias генерируются depmod при установке пакета.
+          STAGE=work/modstage
+          mkdir -p "$STAGE/lib/modules"
+          if [ -d "work/unpack-modules/lib/modules/$ACTUAL" ]; then
+            cp -a "work/unpack-modules/lib/modules/$ACTUAL" "$STAGE/lib/modules/"
+          elif [ -d "work/unpack-modules/usr/lib/modules/$ACTUAL" ]; then
+            cp -a "work/unpack-modules/usr/lib/modules/$ACTUAL" "$STAGE/lib/modules/"
+          else
+            echo "модули $ACTUAL не найдены; запрошено $KVER" >&2; exit 1
+          fi
+          depmod -b "$STAGE" "$ACTUAL"
+          test -s "$STAGE/lib/modules/$ACTUAL/modules.dep"
           mkdir -p "out/kernel-pkg/lib/modules"
-          cp -a "work/unpack-modules/lib/modules/$ACTUAL" "out/kernel-pkg/lib/modules/"
-          test -s "out/kernel-pkg/lib/modules/$ACTUAL/modules.dep"
+          cp -a "$STAGE/lib/modules/$ACTUAL" "out/kernel-pkg/lib/modules/"
+          test -s "out/kernel-pkg/lib/modules/$ACTUAL/modules.alias"
           printf '%s\n' "$ACTUAL" > out/kernel-pkg/kernel-release.txt
           # make-rootfs.sh ищет DTB по basename(DTB) внутри boot/dtbs/
           mkdir -p "out/kernel-pkg/boot/dtbs/$ACTUAL/qcom"
