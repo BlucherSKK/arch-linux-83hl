@@ -105,8 +105,23 @@ if [ -n "$FIRMWARE_URL" ] && [ ! -d "$FIRMWARE_DIR/qcom" ]; then
   if [ -n "$FIRMWARE_SHA256" ]; then
     echo "$FIRMWARE_SHA256  $fw_tar" | sha256sum -c - || die "SHA256 прошивок не совпал"
   fi
-  tar -xzf "$fw_tar" -C "$FIRMWARE_DIR"
-  [ -d "$FIRMWARE_DIR/qcom" ] || die "в архиве нет qcom/ — это не тот файл"
+  # Архив может быть завёрнут в firmware/, linux/ или другую папку — ищем
+  # каталог qcom на любой глубине и приводим к ожидаемому виду $FIRMWARE_DIR/qcom.
+  fw_stage="$CACHE/fw-extract"
+  rm -rf "$fw_stage"
+  mkdir -p "$fw_stage"
+  tar -xzf "$fw_tar" -C "$fw_stage"
+  log "верхние каталоги архива прошивок: $(tar -tzf "$fw_tar" | awk -F/ '{print $1}' | sort -u | tr '\n' ' ')"
+  fw_qcom=""
+  for d in $(find "$fw_stage" -type d -name qcom); do
+    fw_qcom="$d"
+    [ -d "$d/x1p42100/LENOVO/83HL" ] && break
+  done
+  [ -n "$fw_qcom" ] || die "в архиве нет каталога qcom/ — это не тот файл"
+  mkdir -p "$FIRMWARE_DIR/qcom"
+  cp -a "$fw_qcom/." "$FIRMWARE_DIR/qcom/"
+  [ -f "$FIRMWARE_DIR/qcom/x1p42100/LENOVO/83HL/qcadsp8380.mbn" ] || \
+    die "в архиве нет qcom/x1p42100/LENOVO/83HL/qcadsp8380.mbn — это не тот файл"
 fi
 mkdir -p "$ROOTFS_DIR/usr/lib/firmware"
 for d in "$ROOT/firmware" "$FIRMWARE_DIR"; do
@@ -119,7 +134,7 @@ FW83="$ROOTFS_DIR/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL"
 if [ -f "$FW83/qcadsp8380.mbn" ] && [ -f "$FW83/qcdxkmsucpurwa.mbn" ]; then
   log "ADSP/CDSP/GPU firmware для 83HL: на месте"
 else
-  warn "нет $FW83/qcadsp8380.mbn или qcdxkmsucpurwa.mbn — не будет звука и GPU (см. docs/83hl-linux.md)"
+  die "нет $FW83/qcadsp8380.mbn или qcdxkmsucpurwa.mbn — образ не загрузится (см. docs/83hl-linux.md)"
 fi
 
 # fstab с метками разделов
