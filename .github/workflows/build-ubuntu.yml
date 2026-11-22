@@ -334,10 +334,10 @@ jobs:
           ls -lh out/release/
 
           notes="Сборка Ubuntu 26.04.1 ARM64 для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL). ISO разбит на части < 2 ГиБ — см. README.txt (cat *.part-* > iso)."
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --notes "$notes"
-            gh release upload "$tag" out/release/* keys/MOK.der --clobber
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes "$notes"
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" out/release/* keys/MOK.der --clobber
           else
-            gh release create "$tag" --title "Ubuntu 26.04 83HL (${tag})" --notes "$notes" \
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "Ubuntu 26.04 83HL (${tag})" --notes "$notes" \
               out/release/* keys/MOK.der
           fi
