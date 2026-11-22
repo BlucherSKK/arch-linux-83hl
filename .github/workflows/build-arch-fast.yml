@@ -235,9 +235,20 @@ jobs:
           path: out/kernel-pkg
 
       - name: rootfs
-        run: sudo -E bash scripts/make-rootfs.sh
+        run: |
+          set -o pipefail
+          sudo -E bash scripts/make-rootfs.sh 2>&1 | tee out/rootfs.log
         env:
           EXTRA_PKGS: ${{ vars.EXTRA_PKGS }}
+
+      - name: rootfs log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-log-fast
+          path: out/rootfs.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: disk image
         run: sudo -E bash scripts/make-image.sh
