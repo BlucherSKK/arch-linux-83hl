@@ -200,7 +200,7 @@ fi
 
 echo "==> пакеты"
 # shellcheck disable=SC2086
-"${PAC[@]}" -S --needed sudo openssh networkmanager bluez vim htop zstd less which \
+"${PAC[@]}" -S --needed sudo openssh networkmanager bluez vim htop zstd less which cpio \
   linux-firmware-qcom alsa-utils alsa-ucm-conf \
   ${EXTRA_PKGS:-}
 
@@ -249,7 +249,8 @@ if ( cd / && find \
   cat "$FWCP" >> /boot/initramfs-linux83hl.img
   rm -f "$FWCP"
 else
-  echo "WARN: не смог добавить firmware в initramfs"
+  echo "FATAL: не смог добавить firmware в initramfs — образ не загрузится" >&2
+  exit 1
 fi
 
 echo "==> audio topology для LENOVO-Ideapad-5"
