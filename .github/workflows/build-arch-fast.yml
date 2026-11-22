@@ -295,6 +295,34 @@ jobs:
           name: kernel-bundle-fast
           path: out/kernel
 
+      - name: prepare assets
+        run: |
+          set -euo pipefail
+          # gh release принимает только файлы: каталог out/kernel нужно упаковать
+          if [ -d out/kernel ]; then
+            tar -C out/kernel -cf "out/linux-ubuntu-${KVER}-bundle.tar" .
+            rm -rf out/kernel
+          fi
+          {
+            echo "Arch Linux ARM для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL)."
+            echo "Ядро Ubuntu ${KVER} (готовое, без компиляции) + DTB Glathe 7.3.y LCD."
+            echo
+            echo "Если образ разбит на части (> 1.9 ГиБ):"
+            echo
+            echo "    cat arch-83hl.img.zst.part-* > arch-83hl.img.zst"
+            echo
+            echo "Проверка и запись:"
+            echo
+            echo "    sha256sum -c SHA256SUMS"
+            echo "    zstd -dc arch-83hl.img.zst | sudo dd of=/dev/<ваш-диск> bs=16M status=progress conv=fsync"
+          } > out/README.txt
+          (
+            cd out
+            mapfile -t files < <(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort)
+            sha256sum "${files[@]}" > SHA256SUMS
+          )
+          ls -lh out
+
       - name: publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -302,5 +330,11 @@ jobs:
           set -euo pipefail
           tag="${{ inputs.release_tag || github.ref_name }}"
           body="Быстрая сборка Arch для IdeaPad Slim 5 14Q8X9 (83HL): userspace Arch Linux ARM + готовое ядро Ubuntu ${KVER} (без компиляции ядра), DTB Glathe 7.3.y LCD, прошивки 83HL в initramfs."
-          gh release create "$tag" out/* --repo "$GITHUB_REPOSITORY" --title "$tag (arch-fast)" --notes "$body" || \
-          gh release upload "$tag" out/* --repo "$GITHUB_REPOSITORY" --clobber
+          mapfile -t assets < <(find out -maxdepth 1 -type f -printf '%p\n' | sort)
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes "$body"
+            gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+              --title "$tag (arch-fast)" --notes "$body"
+          fi

@@ -218,6 +218,33 @@ jobs:
           name: kernel-tar-alt
           path: out/kernel
 
+      - name: prepare assets
+        run: |
+          set -euo pipefail
+          # kernel-tar-alt — файл внутри out/kernel; gh release не принимает каталоги
+          if [ -d out/kernel ]; then
+            find out/kernel -maxdepth 1 -type f -exec mv -t out/ {} +
+            rmdir out/kernel 2>/dev/null || true
+          fi
+          {
+            echo "Arch Linux ARM для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL), сборка alt (Glathe 7.3.y)."
+            echo
+            echo "Если образ разбит на части (> 1.9 ГиБ):"
+            echo
+            echo "    cat arch-83hl.img.zst.part-* > arch-83hl.img.zst"
+            echo
+            echo "Проверка и запись:"
+            echo
+            echo "    sha256sum -c SHA256SUMS"
+            echo "    zstd -dc arch-83hl.img.zst | sudo dd of=/dev/<ваш-диск> bs=16M status=progress conv=fsync"
+          } > out/README.txt
+          (
+            cd out
+            mapfile -t files < <(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort)
+            sha256sum "${files[@]}" > SHA256SUMS
+          )
+          ls -lh out
+
       - name: publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -225,5 +252,11 @@ jobs:
           set -euo pipefail
           tag="${{ inputs.release_tag || github.ref_name }}"
           body="Альтернативная сборка (Glathe 7.3.y) для IdeaPad Slim 5 14Q8X9 (83HL)."
-          gh release create "$tag" out/* --repo "$GITHUB_REPOSITORY" --title "$tag (alt)" --notes "$body" || \
-          gh release upload "$tag" out/* --repo "$GITHUB_REPOSITORY" --clobber
+          mapfile -t assets < <(find out -maxdepth 1 -type f -printf '%p\n' | sort)
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes "$body"
+            gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+              --title "$tag (alt)" --notes "$body"
+          fi
