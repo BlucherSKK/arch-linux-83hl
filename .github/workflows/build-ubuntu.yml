@@ -76,9 +76,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             xorriso squashfs-tools device-tree-compiler cpp mtools dosfstools \
             systemd-ukify sbsigntool python3-pefile python3-zstandard \
-            build-essential gcc make kmod clang lld llvm \
-            curl ca-certificates unzip openssl file \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu dwarves
+            kmod curl ca-certificates unzip openssl file
 
       - name: clone mich-de kit and glathe dts
         run: |
@@ -238,28 +236,50 @@ jobs:
           python3 "$GITHUB_WORKSPACE/.github/scripts/patch-build-iso.py" scripts/build-iso.sh
           bash -n scripts/build-iso.sh
 
-      - name: build 83hl dkms modules (optional)
+      - name: build 83hl dkms modules (native arm64 container)
         if: ${{ inputs.build_modules }}
         run: |
           set -euo pipefail
           cd work/kit/repo
           KV="${{ steps.kv.outputs.kv }}"
-          # fastrpc is not shipped by build-video.sh and may not match 7.0 API
+          BASE="${{ steps.kv.outputs.base }}"
+          # fastrpc is not shipped by build-video.sh and may not match the 7.0 API
           sed -i 's#obj-m += iris/ clk/ ec/ npu/ fastrpc/#obj-m += iris/ clk/ ec/ npu/#' dkms/83hl-drivers-1.0/Makefile
-          if [ "$(uname -m)" = "x86_64" ]; then
-            sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/gcc-15
-            sed -i \
-              -e 's/make -s -C/make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -C/' \
-              -e 's/strip --strip-debug/aarch64-linux-gnu-strip --strip-debug/' \
-              -e 's/-j8/-j4/' \
-              scripts/build-video.sh
-          fi
-          # prebuilt aarch64 tools must be newer than their sources, else make
-          # tries to rebuild them (and would need the full kernel tree)
-          sudo find "/usr/src/linux-headers-${KV}/scripts" -type f -perm -u+x -exec touch {} + 2>/dev/null || true
-          if ! bash scripts/build-video.sh "$KV"; then
-            echo "::warning::DKMS build failed — ISO will be built without 83HL modules"
-            rm -rf out/modules
+          mkdir -p out/modules
+          # Build natively inside an arm64 resolute container: the prebuilt
+          # aarch64 kernel tools (fixdep/modpost) then run without qemu, and
+          # apt resolves the matching common+generic headers automatically.
+          if docker run --rm --platform linux/arm64 \
+               -v "$PWD:/work" -w /work \
+               -e KV="$KV" -e BASE="$BASE" \
+               ubuntu:26.04 bash -euo pipefail -c '
+                 export DEBIAN_FRONTEND=noninteractive
+                 printf "deb http://ports.ubuntu.com/ubuntu-ports resolute main restricted universe multiverse\ndeb http://ports.ubuntu.com/ubuntu-ports resolute-updates main restricted universe multiverse\ndeb http://ports.ubuntu.com/ubuntu-ports resolute-security main restricted universe multiverse\n" > /etc/apt/sources.list
+                 rm -f /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+                 apt-get update
+                 apt-get install -y --no-install-recommends \
+                   gcc make kmod dwarves "linux-headers-${BASE}" "linux-headers-${KV}"
+                 B=$(mktemp -d)
+                 cp -a dkms/83hl-drivers-1.0/. "$B"/
+                 make -C "/usr/src/linux-headers-${KV}" M="$B" modules -j"$(nproc)"
+                 mkdir -p "out/modules/${KV}"
+                 for m in iris/qcom-iris.ko clk/videocc-x1p42100.ko \
+                          ec/qcom-hamoa-ec.ko ec/lenovo-83hl-ec.ko \
+                          npu/cdsp-keepalive-83hl.ko; do
+                   if [ -f "$B/$m" ]; then
+                     strip --strip-debug "$B/$m" 2>/dev/null || true
+                     install -m644 "$B/$m" "out/modules/${KV}/"
+                     echo "built: $m"
+                   else
+                     echo "WARN: $m not built"
+                   fi
+                 done
+                 rm -rf "$B"
+               '; then
+            sudo chown -R "$(id -u):$(id -g)" out/modules
+          else
+            echo "::warning::DKMS build in arm64 container failed — ISO will be built without 83HL modules"
+            sudo rm -rf out/modules
           fi
           find out/modules -name '*.ko' -printf '%p\n' 2>/dev/null || true
 

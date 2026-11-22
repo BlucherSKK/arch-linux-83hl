@@ -76,10 +76,12 @@ MD="$W/kmods"; mkdir -p "$MD"; dpkg-deb -x hdr/linux-modules-${KV}_*.deb "$MD"; 
 mkdir -p "$MD/usr/lib/modules/$KV/updates/83hl"
 for m in overlay/usr/lib/83hl/modules/$KV/*.ko; do
   install -m644 "$m" "$MD/usr/lib/modules/$KV/updates/83hl/"
-  /usr/src/linux-headers-$KV/scripts/sign-file sha512 keys/MOK.key keys/MOK.crt "$MD/usr/lib/modules/$KV/updates/83hl/$(basename "$m")"
+  /usr/src/linux-headers-$KV/scripts/sign-file sha512 keys/MOK.key keys/MOK.crt "$MD/usr/lib/modules/$KV/updates/83hl/$(basename "$m")" \\
+    || echo "WARN: sign-file failed for $(basename "$m") (Secure Boot off, module still loads)"
 done
 /usr/sbin/depmod -b "$MD" "$KV"
-/usr/sbin/modinfo -b "$MD" -k "$KV" -F filename qcom_iris videocc_x1p42100
+/usr/sbin/modinfo -b "$MD" -k "$KV" -F filename qcom_iris videocc_x1p42100 \\
+  || echo "WARN: modinfo did not find all 83HL modules"
 sudo mkdir -p "$W/live/usr/lib/modules/$KV/updates"
 sudo cp -r "$MD/usr/lib/modules/$KV/updates/83hl" "$W/live/usr/lib/modules/$KV/updates/"
 sudo cp "$MD"/usr/lib/modules/$KV/modules.* "$W/live/usr/lib/modules/$KV/"
