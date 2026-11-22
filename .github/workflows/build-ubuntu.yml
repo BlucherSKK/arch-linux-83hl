@@ -1,5 +1,19 @@
 name: build-ubuntu-83hl
 
+# Сборка Ubuntu 26.04.1 ARM64 ISO для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL)
+# по рецепту mich-de/ubuntu-ideapad-slim5x-83hl, БЕЗ компиляции ядра:
+#   - ядро и модули берутся готовыми из Ubuntu (resolute / resolute-updates);
+#   - DTS компилируется из Glathe 7.3.y (sparse checkout);
+#   - UKI собирается через resolute ukify (--devicetree-auto/--hwids/--sbat)
+#     и подписывается локальной MOK;
+#   - прошивки Qualcomm — из секрета FULL_FIRMWARE (Google Drive).
+#
+# Запуск: Actions -> build-ubuntu-83hl -> Run workflow.
+#
+# Если FULL_FIRMWARE не задан, сборка упадёт на шаге прошивок: положите
+# архив с qcadsp8380.mbn/qccdsp8380.mbn/qcdxkmsucpurwa.mbn (и, желательно,
+# adsp_dtbs.elf/cdsp_dtbs.elf) в секрет FULL_FIRMWARE (или FIRMWARE_URL).
+
 on:
   workflow_dispatch:
     inputs:
@@ -7,6 +21,10 @@ on:
         description: "URL базового ubuntu-26.04.1-desktop-arm64.iso"
         required: false
         default: "https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04.1-desktop-arm64.iso"
+      build_modules:
+        description: "Собирать DKMS-модули 83HL (iris/videocc/EC)"
+        type: boolean
+        default: true
       release_tag:
         description: "Тег релиза, например v0.1.0 (пусто = только артефакты)"
         required: false
@@ -24,15 +42,16 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FULL_FIRMWARE_URL: ${{ secrets.FULL_FIRMWARE }}
+  FULL_FIRMWARE_URL: ${{ secrets.FULL_FIRMWARE || secrets.FIRMWARE_URL || vars.FULL_FIRMWARE || vars.FIRMWARE_URL }}
   UBUNTU_ISO_URL: ${{ inputs.ubuntu_iso_url }}
+  UBUNTU_SUITE: resolute
   DEBIAN_FRONTEND: noninteractive
 
 jobs:
   build-iso:
     name: build ubuntu 83hl iso (arm64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 300
     steps:
       - name: checkout repo
         uses: actions/checkout@v4
@@ -41,7 +60,7 @@ jobs:
 
       - name: free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost || true
           sudo apt-get clean
           df -h /
 
@@ -56,9 +75,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xorriso squashfs-tools device-tree-compiler cpp mtools dosfstools \
-            systemd-ukify sbsigntool python3-pefile build-essential gcc make kmod \
-            clang lld llvm curl ca-certificates unzip openssl file \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            systemd-ukify sbsigntool python3-pefile python3-zstandard \
+            build-essential gcc make kmod clang lld llvm \
+            curl ca-certificates unzip openssl file \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu dwarves
 
       - name: clone mich-de kit and glathe dts
         run: |
@@ -81,20 +101,39 @@ jobs:
             -keyout keys/MOK.key -out keys/MOK.crt
           openssl x509 -in keys/MOK.crt -outform DER -out keys/MOK.der
 
-      - name: fetch ubuntu iso and helper debs
+      - name: fetch ubuntu iso
         run: |
           set -euo pipefail
           cd work/kit/repo
-          mkdir -p iso debs hdr /tmp/arm64-apt/lists/partial /tmp/arm64-apt/cache/archives/partial /tmp/arm64-apt/empty.d
-          touch /tmp/arm64-apt/status
+          mkdir -p iso
           curl -fSL --retry 3 "$UBUNTU_ISO_URL" -o iso/ubuntu-26.04.1-desktop-arm64.iso
+          ls -lh iso/
 
-          cat <<'EOF' > /tmp/arm64-apt/sources.list
-          deb http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
-          deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-          deb http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+      - name: detect iso kernel version
+        id: kv
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          osirrox -indev iso/ubuntu-26.04.1-desktop-arm64.iso -extract /casper/vmlinuz /tmp/vmlinuz.iso >/dev/null 2>&1
+          KV=$(python3 -I -c "import pefile,sys;pe=pefile.PE(sys.argv[1],fast_load=True);print([s.get_data()[:s.Misc_VirtualSize] for s in pe.sections if s.Name.startswith(b'.uname')][0].decode().strip(chr(0)).strip())" /tmp/vmlinuz.iso)
+          test -n "$KV"
+          echo "iso kernel: $KV"
+          echo "kv=$KV" >> "$GITHUB_OUTPUT"
+          echo "base=${KV%-generic}" >> "$GITHUB_OUTPUT"
+
+      - name: fetch ubuntu arm64 packages (resolute)
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          KV="${{ steps.kv.outputs.kv }}"
+          BASE="${{ steps.kv.outputs.base }}"
+          mkdir -p debs hdr /tmp/arm64-apt/lists/partial /tmp/arm64-apt/cache/archives/partial /tmp/arm64-apt/empty.d
+          touch /tmp/arm64-apt/status
+          cat <<EOF > /tmp/arm64-apt/sources.list
+          deb http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_SUITE} main restricted universe multiverse
+          deb http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_SUITE}-updates main restricted universe multiverse
+          deb http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_SUITE}-security main restricted universe multiverse
           EOF
-
           ARM64_APT=(
             apt-get
             -o APT::Architecture=arm64
@@ -105,30 +144,42 @@ jobs:
             -o Dir::State::status=/tmp/arm64-apt/status
             -o Dir::Cache=/tmp/arm64-apt/cache
           )
-
           "${ARM64_APT[@]}" update
 
+          # helper debs shipped inside the ISO (/83hl/debs) for the installed system
           (
             cd debs
             "${ARM64_APT[@]}" download \
-              systemd-ukify sbsigntool python3-pefile mokutil \
+              systemd-ukify sbsigntool stubble python3-pefile mokutil \
               python3-zstandard python3-libfdt libfdt1
           )
+
+          # kernel headers for the ISO kernel (common + -generic!) and modules
+          # (System.map + modules.* used by build-iso.sh). libc6/libssl3t64 are
+          # needed so qemu can run the prebuilt aarch64 kernel tools.
           (
             cd hdr
-            for pkg in linux-headers-7.0.0-30-generic linux-headers-7.0.0-43-generic linux-modules-7.0.0-30-generic; do
-              "${ARM64_APT[@]}" download "$pkg" || echo "WARN: package $pkg not found in current repo index"
-            done
-            if ! ls linux-headers-7.0.0-*-generic*.deb >/dev/null 2>&1; then
-              CANDIDATES="$(apt-cache -o APT::Architecture=arm64 -o APT::Architectures=arm64 -o Dir::Etc::sourcelist=/tmp/arm64-apt/sources.list -o Dir::Etc::sourceparts=/tmp/arm64-apt/empty.d -o Dir::State=/tmp/arm64-apt/lists -o Dir::State::status=/tmp/arm64-apt/status -o Dir::Cache=/tmp/arm64-apt/cache pkgnames | grep -E '^linux-headers-7\.0\.0-[0-9]+-generic$' | sort -V | tail -n1)"
-              test -n "$CANDIDATES"
-              "${ARM64_APT[@]}" download "$CANDIDATES"
-            fi
-            for deb in *.deb; do
-              sudo dpkg-deb -x "$deb" /
-            done
+            "${ARM64_APT[@]}" download \
+              "linux-headers-${BASE}" "linux-headers-${KV}" \
+              "linux-modules-${KV}" libc6 libssl3t64
           )
-          ls -la /usr/src/ | grep linux-headers || true
+          ls -lh debs hdr
+
+          for deb in hdr/linux-headers-*.deb hdr/libc6_*.deb hdr/libssl3t64_*.deb; do
+            sudo dpkg-deb -x "$deb" /
+          done
+          ls -d /usr/src/linux-headers-* | head
+          ls -l /usr/lib/ld-linux-aarch64.so.1
+
+      - name: use resolute ukify (needs --hwids/--devicetree-auto)
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          mkdir -p /tmp/ukify
+          dpkg-deb -x debs/systemd-ukify_*.deb /tmp/ukify
+          # noble's ukify (255) lacks --hwids/--devicetree-auto; install 259.5
+          sudo install -m755 /tmp/ukify/usr/bin/ukify /usr/local/bin/ukify
+          ukify --version
 
       - name: download and unpack firmware from FULL_FIRMWARE
         run: |
@@ -165,30 +216,61 @@ jobs:
             exit 1
           fi
 
+          DST=work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL
           if [ -d work/fw_raw/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL ]; then
-            cp -a work/fw_raw/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/. \
-              work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/
+            cp -a work/fw_raw/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/. "$DST/"
           elif [ -d work/fw_raw/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL ]; then
-            cp -a work/fw_raw/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/. \
-              work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/
+            cp -a work/fw_raw/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/. "$DST/"
+          elif [ -d work/fw_raw/qcom/x1p42100/LENOVO/83HL ]; then
+            cp -a work/fw_raw/qcom/x1p42100/LENOVO/83HL/. "$DST/"
           else
-            find work/fw_raw -maxdepth 1 -type f -exec cp -a {} \
-              work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/ \;
+            find work/fw_raw -maxdepth 1 -type f -exec cp -a {} "$DST/" \;
           fi
-          ls -la work/kit/repo/overlay/usr/lib/firmware/qcom/x1p42100/LENOVO/83HL/
+          ls -la "$DST/"
+          for f in qcadsp8380.mbn qccdsp8380.mbn qcdxkmsucpurwa.mbn; do
+            [ -f "$DST/$f" ] || echo "::warning::firmware $f not found in FULL_FIRMWARE archive"
+          done
 
-      - name: build video modules and 83hl iso
+      - name: patch build-iso.sh for CI (no /mnt/c, optional modules)
         run: |
           set -euo pipefail
           cd work/kit/repo
-          if ! command -v gcc-15 >/dev/null 2>&1; then
+          python3 "$GITHUB_WORKSPACE/.github/scripts/patch-build-iso.py" scripts/build-iso.sh
+          bash -n scripts/build-iso.sh
+
+      - name: build 83hl dkms modules (optional)
+        if: ${{ inputs.build_modules }}
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          KV="${{ steps.kv.outputs.kv }}"
+          # fastrpc is not shipped by build-video.sh and may not match 7.0 API
+          sed -i 's#obj-m += iris/ clk/ ec/ npu/ fastrpc/#obj-m += iris/ clk/ ec/ npu/#' dkms/83hl-drivers-1.0/Makefile
+          if [ "$(uname -m)" = "x86_64" ]; then
             sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/gcc-15
+            sed -i \
+              -e 's/make -s -C/make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -C/' \
+              -e 's/strip --strip-debug/aarch64-linux-gnu-strip --strip-debug/' \
+              -e 's/-j8/-j4/' \
+              scripts/build-video.sh
           fi
-          sed -i 's/make -s -C/make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -C/' scripts/build-video.sh
-          bash scripts/build-video.sh 7.0.0-30-generic 7.0.0-43-generic
-          mkdir -p /mnt/c
+          # prebuilt aarch64 tools must be newer than their sources, else make
+          # tries to rebuild them (and would need the full kernel tree)
+          sudo find "/usr/src/linux-headers-${KV}/scripts" -type f -perm -u+x -exec touch {} + 2>/dev/null || true
+          if ! bash scripts/build-video.sh "$KV"; then
+            echo "::warning::DKMS build failed — ISO will be built without 83HL modules"
+            rm -rf out/modules
+          fi
+          find out/modules -name '*.ko' -printf '%p\n' 2>/dev/null || true
+
+      - name: build 83hl iso
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          df -h /
           bash scripts/build-iso.sh
           ls -lh out/
+          df -h /
 
       - name: upload iso artifact
         uses: actions/upload-artifact@v4

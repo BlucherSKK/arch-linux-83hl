@@ -62,7 +62,9 @@ jobs:
   kernel:
     name: kernel (arm64, Glathe 7.3.y)
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    # полная сборка ubuntu_x1e_defconfig на 4 ядрах с холодным ccache
+    # не влезает в 180 минут; 350 — практический максимум GitHub (6 ч)
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
         with:
