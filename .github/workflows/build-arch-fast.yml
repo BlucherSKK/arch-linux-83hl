@@ -1,0 +1,284 @@
+name: build-arch-83hl-fast
+
+# Быстрая сборка Arch для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL) БЕЗ компиляции ядра.
+#
+# Идея та же, что в build-ubuntu.yml: готовое ядро Ubuntu + DTS Glathe 7.3.y.
+# Отличается только userspace — Arch Linux ARM вместо Ubuntu:
+#   - Image       — из deb linux-image-<KVER> (секция .linux готового UKI Ubuntu);
+#   - модули      — из deb linux-modules-<KVER> (ports.ubuntu.com, arm64);
+#   - DTB (LCD)   — из Glathe jg/ubuntu-qcom-x1e-7.3.y через cpp+dtc (секунды);
+#   - прошивки    — секрет FULL_FIRMWARE / FIRMWARE_URL, как и в других сборках;
+#   - rootfs/UKI/образ — штатные make-rootfs.sh и make-image.sh без изменений.
+#
+# Итог: arch-83hl-fast.img.zst = Arch userspace на проверенном ядре Ubuntu.
+#
+# Запуск: Actions -> build-arch-83hl-fast -> Run workflow
+#         или тег fast-v0.1.0 (релиз публикуется автоматически).
+
+on:
+  push:
+    tags:
+      - 'fast-*'
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: "Версия ядра Ubuntu (например 7.0.0-43-generic)"
+        required: false
+        default: "7.0.0-43-generic"
+      firmware_url:
+        description: "URL .tar.gz с прошивками (пусто = секрет FULL_FIRMWARE)"
+        required: false
+        default: ""
+      image_size:
+        description: "Размер образа (6G, 8G, ...)"
+        required: false
+        default: "6G"
+      release_tag:
+        description: "Тег релиза (пусто = только артефакты)"
+        required: false
+        default: ""
+      skip_release:
+        description: "Не публиковать релиз"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-arch-fast-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  OUT: out
+  KVER: ${{ inputs.kernel_version || '7.0.0-43-generic' }}
+  DTB: qcom/x1p42100-lenovo-ideapad-slim5x-lcd.dtb
+  FIRMWARE_URL: ${{ inputs.firmware_url || secrets.FULL_FIRMWARE || secrets.FIRMWARE_URL || vars.FIRMWARE_URL || '' }}
+  IMAGE_SIZE: ${{ inputs.image_size || vars.IMAGE_SIZE || '6G' }}
+  ZSTD_LEVEL: "12"
+
+jobs:
+  kernel-bundle:
+    name: prebuilt ubuntu kernel + modules + DTB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost || true
+          sudo apt-get clean
+          df -h /
+
+      - name: deps
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates git file cpp device-tree-compiler \
+            binutils python3 zstd
+
+      # Нужны: scripts/build-dtb.sh и локальная добавка dts/*-83hl.dts из кита
+      # mich-de, плюс сами DTS из Glathe 7.3.y (sparse checkout — несколько МБ).
+      - name: clone kit and glathe dts
+        run: |
+          set -euo pipefail
+          mkdir -p work/kit
+          git clone --depth 1 https://github.com/mich-de/ubuntu-ideapad-slim5x-83hl.git work/kit/repo
+          git clone --depth 1 --filter=blob:none --sparse -b jg/ubuntu-qcom-x1e-7.3.y \
+            https://github.com/jglathe/linux_ms_dev_kit.git work/kit/repo/src/glathe
+          git -C work/kit/repo/src/glathe sparse-checkout set \
+            arch/arm64/boot/dts/qcom include/dt-bindings include/uapi/linux scripts/dtc/include-prefixes
+
+      - name: compile LCD DTB (Glathe 7.3.y, ~seconds)
+        run: |
+          set -euo pipefail
+          cd work/kit/repo
+          GLATHE="$PWD/src/glathe" bash scripts/build-dtb.sh lcd
+          DTBFILE="out/x1p42100-lenovo-ideapad-slim5x-lcd.dtb"
+          test -s "$DTBFILE"
+          strings "$DTBFILE" | grep -q 'lenovo,ideapad-slim5x-lcd'
+          mkdir -p "$GITHUB_WORKSPACE/out/kernel-pkg/boot/dtbs"
+          install -m 0644 "$DTBFILE" \
+            "$GITHUB_WORKSPACE/out/kernel-pkg/boot/dtbs/x1p42100-lenovo-ideapad-slim5x-lcd.dtb"
+          ls -lh "$DTBFILE"
+
+      # apt с arm64-архитектурой на amd64-раннере — как в build-ubuntu.yml.
+      - name: fetch prebuilt ubuntu kernel debs
+        run: |
+          set -euo pipefail
+          mkdir -p work/apt/lists/partial work/apt/cache/archives/partial work/apt/empty
+          touch work/apt/status
+          cat <<EOF > work/apt/sources.list
+          deb http://ports.ubuntu.com/ubuntu-ports resolute main restricted universe multiverse
+          deb http://ports.ubuntu.com/ubuntu-ports resolute-updates main restricted universe multiverse
+          deb http://ports.ubuntu.com/ubuntu-ports resolute-security main restricted universe multiverse
+          EOF
+          ARM64_APT=(
+            apt-get
+            -o APT::Architecture=arm64
+            -o APT::Architectures=arm64
+            -o Dir::Etc::sourcelist="$PWD/work/apt/sources.list"
+            -o Dir::Etc::sourceparts="$PWD/work/apt/empty"
+            -o Dir::State="$PWD/work/apt/lists"
+            -o Dir::State::status="$PWD/work/apt/status"
+            -o Dir::Cache="$PWD/work/apt/cache"
+          )
+          "${ARM64_APT[@]}" update
+          mkdir -p work/kernel-debs
+          (
+            cd work/kernel-debs
+            "${ARM64_APT[@]}" download "linux-image-$KVER" "linux-modules-$KVER"
+          )
+          ls -lh work/kernel-debs
+          mkdir -p work/unpack-image work/unpack-modules
+          dpkg-deb -x work/kernel-debs/linux-image-*.deb work/unpack-image
+          dpkg-deb -x work/kernel-debs/linux-modules-*.deb work/unpack-modules
+          find work/unpack-image/boot -maxdepth 1 -name 'vmlinuz-*' -print
+
+      # vmlinuz в Ubuntu — это UKI: raw Image лежит в секции .linux.
+      - name: assemble kernel bundle
+        id: bundle
+        run: |
+          set -euo pipefail
+          VMLINUZ=$(find work/unpack-image/boot -maxdepth 1 -name 'vmlinuz-*' -type f | head -1)
+          test -n "$VMLINUZ"
+          python3 - "$VMLINUZ" <<'PY'
+          import struct, sys
+          d = open(sys.argv[1], 'rb').read()
+          pe = struct.unpack_from('<I', d, 0x3c)[0]
+          nsec = struct.unpack_from('<H', d, pe + 6)[0]
+          optsz = struct.unpack_from('<H', d, pe + 20)[0]
+          tab = pe + 24 + optsz
+          secs = {}
+          for i in range(nsec):
+              o = tab + 40 * i
+              name = bytes(d[o:o+8]).rstrip(b'\0').decode()
+              vsize = struct.unpack_from('<I', d, o + 8)[0]
+              ptr = struct.unpack_from('<I', d, o + 20)[0]
+              secs[name] = d[ptr:ptr + vsize]
+          if '.linux' not in secs or '.uname' not in secs:
+              raise SystemExit('нет секций .linux/.uname в ' + sys.argv[1])
+          actual = secs['.uname'].rstrip(b'\0').decode().strip()
+          image = secs['.linux']
+          if len(image) < 10_000_000:
+              raise SystemExit(f'подозрительно маленький .linux: {len(image)}')
+          open('work/kver.txt', 'w').write(actual + '\n')
+          open('out/kernel-pkg/boot/Image', 'wb').write(image)
+          print(f'kernel from deb: {actual}, Image={len(image)} bytes')
+          PY
+          ACTUAL=$(cat work/kver.txt)
+          test -d "work/unpack-modules/lib/modules/$ACTUAL" || {
+            echo "модули $ACTUAL не найдены; запрошено $KVER" >&2; exit 1; }
+          mkdir -p "out/kernel-pkg/lib/modules"
+          cp -a "work/unpack-modules/lib/modules/$ACTUAL" "out/kernel-pkg/lib/modules/"
+          test -s "out/kernel-pkg/lib/modules/$ACTUAL/modules.dep"
+          printf '%s\n' "$ACTUAL" > out/kernel-pkg/kernel-release.txt
+          # make-rootfs.sh ищет DTB по basename(DTB) внутри boot/dtbs/
+          mkdir -p "out/kernel-pkg/boot/dtbs/$ACTUAL/qcom"
+          cp out/kernel-pkg/boot/dtbs/x1p42100-lenovo-ideapad-slim5x-lcd.dtb \
+             "out/kernel-pkg/boot/dtbs/$ACTUAL/qcom/"
+          echo "kver=$ACTUAL" >> "$GITHUB_OUTPUT"
+          du -sh out/kernel-pkg
+          find out/kernel-pkg -maxdepth 4 -type f | head -12
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-bundle-fast
+          path: out/kernel-pkg
+          retention-days: 14
+
+  image:
+    name: arch rootfs + disk image
+    needs: kernel-bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache || true
+          sudo apt-get clean
+          df -h /
+
+      - name: qemu binfmt
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dosfstools mtools gdisk e2fsprogs zstd curl ca-certificates cpio
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-bundle-fast
+          path: out/kernel-pkg
+
+      - name: rootfs
+        run: sudo -E bash scripts/make-rootfs.sh
+        env:
+          EXTRA_PKGS: ${{ vars.EXTRA_PKGS }}
+
+      - name: disk image
+        run: sudo -E bash scripts/make-image.sh
+
+      - name: summary
+        run: |
+          {
+            echo "### Arch fast (ядро Ubuntu ${{ needs.kernel-bundle.outputs.kver }})"
+            echo '```'
+            cat out/IMAGE_INFO.txt || true
+            ls -lh out/*.img* 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-files-fast
+          path: |
+            out/arch-83hl.img.zst
+            out/arch-83hl.img.zst.part*
+            out/arch-83hl.img.zst.parts.txt
+            out/IMAGE_INFO.txt
+            out/SHA256SUMS.image
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: release
+    needs: [kernel-bundle, image]
+    if: ${{ !inputs.skip_release && (inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/fast-')) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-files-fast
+          path: out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-bundle-fast
+          path: out/kernel
+
+      - name: publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag || github.ref_name }}"
+          body="Быстрая сборка Arch для IdeaPad Slim 5 14Q8X9 (83HL): userspace Arch Linux ARM + готовое ядро Ubuntu ${KVER} (без компиляции ядра), DTB Glathe 7.3.y LCD, прошивки 83HL в initramfs."
+          gh release create "$tag" out/* --repo "$GITHUB_REPOSITORY" --title "$tag (arch-fast)" --notes "$body" || \
+          gh release upload "$tag" out/* --repo "$GITHUB_REPOSITORY" --clobber

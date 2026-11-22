@@ -225,5 +225,5 @@ jobs:
           set -euo pipefail
           tag="${{ inputs.release_tag || github.ref_name }}"
           body="Альтернативная сборка (Glathe 7.3.y) для IdeaPad Slim 5 14Q8X9 (83HL)."
-          gh release create "$tag" out/* --title "$tag (alt)" --notes "$body" || \
-          gh release upload "$tag" out/* --clobber
+          gh release create "$tag" out/* --repo "$GITHUB_REPOSITORY" --title "$tag (alt)" --notes "$body" || \
+          gh release upload "$tag" out/* --repo "$GITHUB_REPOSITORY" --clobber
