@@ -308,8 +308,36 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          cd work/kit/repo
           tag="${{ inputs.release_tag }}"
-          gh release create "$tag" work/kit/repo/out/*.iso work/kit/repo/keys/MOK.der \
-            --title "Ubuntu 26.04 83HL (${tag})" \
-            --notes "Сборка Ubuntu 26.04.1 ARM64 для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL)." || \
-          gh release upload "$tag" work/kit/repo/out/*.iso work/kit/repo/keys/MOK.der --clobber
+          ISO=$(ls out/*.iso | head -1)
+          test -n "$ISO"
+          base=$(basename "$ISO")
+
+          # GitHub Releases reject assets >= 2 GiB (2147483648 bytes). Split the
+          # ISO into 1900 MiB chunks, keep a checksum and a reassembly note.
+          rm -rf out/release && mkdir -p out/release
+          split -b 1900M -d -a 2 "$ISO" "out/release/${base}.part-"
+          ( cd out/release && sha256sum "${base}".part-* > SHA256SUMS )
+          {
+            echo "Ubuntu 26.04.1 ARM64 ISO для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL)."
+            echo
+            echo "GitHub Releases ограничивает размер одного файла 2 ГиБ, поэтому ISO разбит на части."
+            echo "Соберите его обратно:"
+            echo
+            echo "    cat ${base}.part-* > ${base}"
+            echo "    sha256sum -c SHA256SUMS"
+            echo
+            echo "Затем пишите на USB как обычно (dd / balenaEtcher / Rufus)."
+          } > out/release/README.txt
+          rm -f "$ISO"
+          ls -lh out/release/
+
+          notes="Сборка Ubuntu 26.04.1 ARM64 для Lenovo IdeaPad Slim 5x 14Q8X9 (83HL). ISO разбит на части < 2 ГиБ — см. README.txt (cat *.part-* > iso)."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes "$notes"
+            gh release upload "$tag" out/release/* keys/MOK.der --clobber
+          else
+            gh release create "$tag" --title "Ubuntu 26.04 83HL (${tag})" --notes "$notes" \
+              out/release/* keys/MOK.der
+          fi
