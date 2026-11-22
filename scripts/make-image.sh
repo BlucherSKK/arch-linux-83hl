@@ -14,9 +14,12 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=lib.sh
 source "$ROOT/scripts/lib.sh"
 
-ROOTFS_DIR=${ROOTFS_DIR:-$OUT/rootfs}
+# mcopy/mdir вызываются после cd в rootfs/efi — относительные пути к esp.img
+# там уже не находятся. Приводим все рабочие пути к абсолютным сразу.
+OUT=$(realpath -m -- "$OUT")
+ROOTFS_DIR=$(realpath -m -- "${ROOTFS_DIR:-$OUT/rootfs}")
 IMAGE_SIZE=${IMAGE_SIZE:-8G}
-IMG=${IMG:-$OUT/arch-83hl.img}
+IMG=$(realpath -m -- "${IMG:-$OUT/arch-83hl.img}")
 ZSTD_LEVEL=${ZSTD_LEVEL:-12}
 NO_COMPRESS=${NO_COMPRESS:-0}
 ESP_SIZE=${ESP_SIZE:-512M}
